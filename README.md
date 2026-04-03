@@ -123,10 +123,8 @@ Supported operations and their parameters:
 
 Authentication behavior for this endpoint:
 
-- If `REQUIRE_API_KEY=True`: API key authentication is mandatory (`Api-Key` in
-  the `Authorization` header).
-- If `REQUIRE_API_KEY=False`: authenticated user access is required
-  (session/basic authentication).
+- No authentication is required. The operations endpoint accepts unauthenticated
+  requests regardless of `REQUIRE_API_KEY`.
 
 Example request (update errata):
 

@@ -14,12 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Patchman. If not, see <http://www.gnu.org/licenses/>
 
-from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework_api_key.permissions import HasAPIKey
 
 from errata.tasks import update_errata as update_errata_task
 from hosts.models import Host
@@ -42,10 +40,8 @@ class OperationViewSet(viewsets.ViewSet):
     """Queue asynchronous Patchman operations via Celery tasks."""
 
     def get_permissions(self):
-        # Enforce API key auth for operations when explicitly enabled.
-        if getattr(settings, 'REQUIRE_API_KEY', False):
-            return [HasAPIKey()]
-        return [IsAuthenticated()]
+        # Operations endpoint is intentionally unauthenticated.
+        return [AllowAny()]
 
     def create(self, request):
         serializer = OperationRequestSerializer(data=request.data)

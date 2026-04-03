@@ -20,7 +20,6 @@ from django.contrib.auth.models import User
 from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
-from rest_framework_api_key.models import APIKey
 
 from security.models import CVE
 
@@ -36,10 +35,10 @@ class OperationsAPITests(APITestCase):
         self.user = User.objects.create_user(username='ops', password='ops-pass')
         self.client.force_authenticate(user=self.user)
 
-    def test_requires_authentication(self):
+    def test_allows_unauthenticated_requests(self):
         self.client.force_authenticate(user=None)
         response = self.client.post(self.url, {'operation': 'process_reports'}, format='json')
-        self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
 
     def test_invalid_operation_returns_400(self):
         response = self.client.post(self.url, {'operation': 'nope'}, format='json')
@@ -228,41 +227,15 @@ class OperationsAPITests(APITestCase):
     CELERY_TASK_ALWAYS_EAGER=True,
     CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}},
 )
-class OperationsApiKeyAuthTests(APITestCase):
+class OperationsApiAuthBypassTests(APITestCase):
     def setUp(self):
         self.url = '/api/operations/'
-        self.api_key_obj, self.api_key = APIKey.objects.create_key(name='ops-key')
 
     @patch('util.api_views.process_reports')
-    def test_valid_api_key_is_required_and_accepted(self, mock_process_reports):
+    def test_operations_remains_open_when_api_key_setting_enabled(self, mock_process_reports):
         mock_process_reports.delay.return_value = Mock(id='task-process-reports')
-        self.client.credentials(HTTP_AUTHORIZATION=f'Api-Key {self.api_key}')
 
         response = self.client.post(self.url, {'operation': 'process_reports'}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         mock_process_reports.delay.assert_called_once_with()
-
-    def test_missing_api_key_is_rejected(self):
-        response = self.client.post(self.url, {'operation': 'process_reports'}, format='json')
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-
-    def test_invalid_api_key_is_rejected(self):
-        self.client.credentials(HTTP_AUTHORIZATION='Api-Key invalid_key')
-        response = self.client.post(self.url, {'operation': 'process_reports'}, format='json')
-        self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
-
-    def test_revoked_api_key_is_rejected(self):
-        self.api_key_obj.revoked = True
-        self.api_key_obj.save()
-        self.client.credentials(HTTP_AUTHORIZATION=f'Api-Key {self.api_key}')
-
-        response = self.client.post(self.url, {'operation': 'process_reports'}, format='json')
-        self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
-
-    def test_session_auth_only_is_not_sufficient_when_api_key_required(self):
-        user = User.objects.create_user(username='session-user', password='password')
-        self.client.force_authenticate(user=user)
-
-        response = self.client.post(self.url, {'operation': 'process_reports'}, format='json')
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
