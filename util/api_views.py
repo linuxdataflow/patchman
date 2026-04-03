@@ -116,9 +116,9 @@ class OperationViewSet(viewsets.ViewSet):
     def _queue_process_reports(self, params):
         host = params.get('host')
         if host:
-            # Validate host exists
-            host_obj = get_object_or_404(Host, hostname=host)
-            # Get all unprocessed reports for this host
+            # Get all unprocessed reports for this host. Do not require a
+            # Host row to exist yet, because hosts are created during
+            # Report.process().
             reports = Report.objects.filter(processed=False, host=host)
             task_ids = []
             for report in reports:
