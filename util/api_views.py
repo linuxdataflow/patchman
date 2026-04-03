@@ -30,6 +30,7 @@ from hosts.tasks import (
 )
 from reports.models import Report
 from reports.tasks import process_report, process_reports
+from repos.models import Repository
 from repos.tasks import refresh_repo, refresh_repos
 from security.models import CVE
 from security.tasks import update_cve, update_cves
@@ -73,10 +74,13 @@ class OperationViewSet(viewsets.ViewSet):
             result = clean_database.delay(remove_duplicate_packages=remove_duplicates)
             task_ids.append(result.id)
         elif operation == 'update_errata':
+            repo_id = params.get('repo_id')
+            if repo_id is not None:
+                get_object_or_404(Repository, id=repo_id)
             result = update_errata_task.delay(
                 erratum_type=params.get('erratum_type'),
                 force=params.get('force', False),
-                repo=params.get('repo_id'),
+                repo=repo_id,
             )
             task_ids.append(result.id)
         elif operation == 'update_cves':

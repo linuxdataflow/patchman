@@ -94,7 +94,8 @@ class OperationsAPITests(APITestCase):
     @patch('util.api_views.get_object_or_404')
     @patch('util.api_views.Report')
     @patch('util.api_views.process_report')
-    def test_process_reports_with_hostname_queues_reports(self, mock_process_report, mock_report_model, mock_get_object_or_404):
+    def test_process_reports_with_hostname_queues_reports(
+            self, mock_process_report, mock_report_model, mock_get_object_or_404):
         mock_get_object_or_404.return_value = Mock(id=1, hostname='server1.example.com')
         report1 = Mock(id=1)
         report2 = Mock(id=2)
@@ -116,14 +117,15 @@ class OperationsAPITests(APITestCase):
         self.assertEqual(mock_process_report.delay.call_count, 2)
         mock_report_model.objects.filter.assert_called_once_with(processed=False, host='server1.example.com')
 
-    def test_process_reports_with_nonexistent_hostname_returns_404(self):
+    def test_process_reports_with_no_pending_reports_returns_empty(self):
         response = self.client.post(
             self.url,
             {'operation': 'process_reports', 'params': {'host': 'nonexistent.example.com'}},
             format='json',
         )
 
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(response.data['task_ids'], [])
 
     def test_process_reports_invalid_hostname_type_returns_400(self):
         response = self.client.post(
@@ -176,6 +178,15 @@ class OperationsAPITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['status'], 'error')
+
+    def test_update_errata_nonexistent_repo_returns_404(self):
+        response = self.client.post(
+            self.url,
+            {'operation': 'update_errata', 'params': {'repo_id': 99999}},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     @patch('util.api_views.update_cves')
     def test_update_all_cves_queues_task(self, mock_update_cves):
