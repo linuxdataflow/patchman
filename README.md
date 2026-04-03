@@ -100,6 +100,68 @@ options:
                         Fetch NIST CVE data in addition to MITRE data (rate-limited to 1 API call every 6 seconds)
 ```
 
+### Operations API
+
+Patchman also provides an asynchronous endpoint for triggering selected
+maintenance operations through the REST API.
+
+- Endpoint: `POST /api/operations/`
+- Behavior: validates the request, queues one or more Celery tasks, returns
+  `202 Accepted` with queued task IDs.
+
+Supported operations and their parameters:
+
+| Operation | Parameters | Description |
+|-----------|-----------|-------------|
+| `refresh_repos` | `repo_id` (int, optional), `force` (bool, optional) | Refresh all repos, or a specific repo if `repo_id` provided |
+| `host_updates` | `host` (string, optional) | Find updates for a specific host or all hosts if omitted |
+| `host_updates_alt` | None | Alternative host updates algorithm (faster for homogeneous hosts) |
+| `process_reports` | `host` (string, optional) | Process reports for a specific host or all reports if omitted |
+| `dbcheck` | `remove_duplicates` (bool, optional) | Database sanity checks, optionally remove duplicate packages |
+| `update_errata` | `erratum_type` (string, optional), `force` (bool, optional), `repo_id` (int, optional) | Update errata for specific type or all types. Types: `yum`, `rocky`, `alma`, `arch`, `ubuntu`, `debian`, `centos` |
+| `update_cves` | `cve_id` (string, optional) | Update CVE from CVE.org, or a specific CVE if `cve_id` provided |
+
+Authentication behavior for this endpoint:
+
+- If `REQUIRE_API_KEY=True`: API key authentication is mandatory (`Api-Key` in
+  the `Authorization` header).
+- If `REQUIRE_API_KEY=False`: authenticated user access is required
+  (session/basic authentication).
+
+Example request (update errata):
+
+```json
+{
+  "operation": "update_errata",
+  "params": {
+    "erratum_type": "ubuntu",
+    "force": false
+  }
+}
+```
+
+Example request (process reports for specific host):
+
+```json
+{
+  "operation": "process_reports",
+  "params": {
+    "host": "server1.example.com"
+  }
+}
+```
+
+Example response (`202 Accepted`):
+
+```json
+{
+  "status": "accepted",
+  "operation": "update_errata",
+  "task_ids": ["b8d4f4c7-2ec8-4f92-a30f-40c0c2cf17c1"],
+  "message": "Operation queued for processing"
+}
+```
+
 ### Client dependencies
 
 The client dependencies are kept to a minimum. `rpm` and `dpkg` are

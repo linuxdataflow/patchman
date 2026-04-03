@@ -31,6 +31,7 @@ from packages import views as package_views
 from reports import views as report_views
 from repos import views as repo_views
 from security import views as security_views
+from util import api_views as util_api_views
 
 router = routers.DefaultRouter()
 router.register(r'package-architecture', arch_views.PackageArchitectureViewSet)
@@ -51,6 +52,7 @@ router.register(r'repo', repo_views.RepositoryViewSet)
 router.register(r'mirror', repo_views.MirrorViewSet)
 router.register(r'mirror-package', repo_views.MirrorPackageViewSet)
 router.register(r'report', report_views.ReportViewSet, basename='report')
+router.register(r'operations', util_api_views.OperationViewSet, basename='operations')
 
 admin.autodiscover()
 
