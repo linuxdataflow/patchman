@@ -77,12 +77,9 @@ def process_modules(report, host):
             module = process_module_text(module_str)
             if module:
                 module_ids.append(module.id)
-                host.modules.add(module)
             pbar_update.send(sender=None, index=i + 1)
 
-        for module in host.modules.all():
-            if module.id not in module_ids:
-                host.modules.remove(module)
+        host.modules.set(module_ids)
 
 
 def process_packages(report, host):
@@ -98,15 +95,12 @@ def process_packages(report, host):
             package = process_package_text(pkg_str)
             if package:
                 package_ids.append(package.id)
-                host.packages.add(package)
             else:
                 if pkg_str[0].lower() != 'gpg-pubkey':
                     info_message(text=f'No package returned for {pkg_str}')
             pbar_update.send(sender=None, index=i + 1)
 
-        for package in host.packages.all():
-            if package.id not in package_ids:
-                host.packages.remove(package)
+        host.packages.set(package_ids)
 
 
 def process_updates(report, host):
@@ -136,16 +130,16 @@ def merge_updates(sec_updates, bug_updates):
 def add_updates(updates, host):
     """ Add updates to a Host
     """
-    for host_update in host.updates.all():
-        host.updates.remove(host_update)
     ulen = len(updates)
+    update_ids = []
     if ulen > 0:
         pbar_start.send(sender=None, ptext=f'{host} Updates', plen=ulen)
         for i, (u, sec) in enumerate(updates.items()):
             update = process_update_text(host, u, sec)
             if update:
-                host.updates.add(update)
+                update_ids.append(update.id)
             pbar_update.send(sender=None, index=i + 1)
+    host.updates.set(update_ids)
 
 
 def parse_updates(updates_string, security):
@@ -442,15 +436,12 @@ def process_packages_json(packages_json, host):
         package = process_package_json(pkg)
         if package:
             package_ids.append(package.id)
-            host.packages.add(package)
         else:
             if pkg.get('name', '').lower() != 'gpg-pubkey':
                 info_message(text=f'No package returned for {pkg}')
         pbar_update.send(sender=None, index=i + 1)
 
-    for package in host.packages.all():
-        if package.id not in package_ids:
-            host.packages.remove(package)
+    host.packages.set(package_ids)
 
 
 def process_repo_json(repo, arch):
@@ -525,12 +516,9 @@ def process_modules_json(modules_json, host):
         mod = process_module_json(module)
         if mod:
             module_ids.append(mod.id)
-            host.modules.add(mod)
         pbar_update.send(sender=None, index=i + 1)
 
-    for mod in host.modules.all():
-        if mod.id not in module_ids:
-            host.modules.remove(mod)
+    host.modules.set(module_ids)
 
 
 def process_update_json(host, update, security):
@@ -549,23 +537,22 @@ def process_update_json(host, update, security):
 def process_updates_json(sec_updates_json, bug_updates_json, host):
     """ Processes updates from JSON data (protocol 2)
     """
-    # Clear existing updates
-    for host_update in host.updates.all():
-        host.updates.remove(host_update)
-
     # Merge updates, preferring security over bugfix
     sec_keys = {(u['name'], u['arch']) for u in sec_updates_json}
     bug_updates_filtered = [u for u in bug_updates_json if (u['name'], u['arch']) not in sec_keys]
 
     all_updates = [(u, True) for u in sec_updates_json] + [(u, False) for u in bug_updates_filtered]
+    update_ids = []
 
     if all_updates:
         pbar_start.send(sender=None, ptext=f'{host} Updates', plen=len(all_updates))
         for i, (update, security) in enumerate(all_updates):
             update_obj = process_update_json(host, update, security)
             if update_obj:
-                host.updates.add(update_obj)
+                update_ids.append(update_obj.id)
             pbar_update.send(sender=None, index=i + 1)
+
+    host.updates.set(update_ids)
 
 
 def get_arch(arch):
