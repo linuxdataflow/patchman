@@ -544,13 +544,26 @@ get_apt_updates() {
     if ${verbose} ; then
         echo 'Finding apt updates...'
     fi
-    # Collect regular upgradable packages with phased updates explicitly excluded.
-    # This avoids host-level apt config (Always-Include-Phased-Updates=true)
-    # masking phased-deferred packages.
-    # Use process substitution to keep the loop in the current shell so tmpfile
-    # writes are visible outside the loop.
-    local _tmpfile_reg_names
-    _tmpfile_reg_names=$(mktemp)
+    # Build deferred phased package name list from a simulated upgrade run.
+    # apt reports deferred packages explicitly in this section:
+    # "The following upgrades have been deferred due to phasing:"
+    local _tmpfile_deferred_names
+    _tmpfile_deferred_names=$(mktemp)
+    apt -s upgrade 2>/dev/null \
+    | awk '
+        /^The following upgrades have been deferred due to phasing:$/ { in_block=1; next }
+        in_block && /^$/ { exit }
+        in_block {
+            for (i = 1; i <= NF; i++) {
+                print $i
+            }
+        }
+    ' \
+    | sed -e 's/:.*$//' \
+    | sort -u > "${_tmpfile_deferred_names}"
+
+    # Collect all upgradable packages with phased updates explicitly included.
+    # Any package present in deferred list is classified as phased-deferred.
     while IFS= read -r line ; do
         if [ -z "${line}" ] ; then
             continue
@@ -560,29 +573,18 @@ get_apt_updates() {
         suite=$(echo "${line}" | cut -d '/' -f 2 | cut -d ' ' -f 1)
         version=$(echo "${line}" | awk '{print $2}')
         arch=$(echo "${line}" | awk '{print $3}')
-        echo "${pkg}" >> "${_tmpfile_reg_names}"
-        if echo "${suite}" | grep -qi 'security' ; then
-            echo "${pkg}.${arch} ${version}" >> "${tmpfile_sec}"
-        else
-            echo "${pkg}.${arch} ${version}" >> "${tmpfile_bug}"
-        fi
-    done < <(apt -o APT::Get::Always-Include-Phased-Updates=false list --upgradable 2>/dev/null | grep -v '^Listing' | grep -v '^$')
-
-    # Detect phased updates: packages present when phased updates are explicitly
-    # included but absent from the explicit phased-excluded listing above.
-    while IFS= read -r line ; do
-        if [ -z "${line}" ] ; then
-            continue
-        fi
-        pkg=$(echo "${line}" | cut -d '/' -f 1)
-        version=$(echo "${line}" | awk '{print $2}')
-        arch=$(echo "${line}" | awk '{print $3}')
-        if ! grep -qxF "${pkg}" "${_tmpfile_reg_names}" ; then
+        if grep -qxF "${pkg}" "${_tmpfile_deferred_names}" ; then
             echo "${pkg}.${arch} ${version}" >> "${tmpfile_phased}"
+        else
+            if echo "${suite}" | grep -qi 'security' ; then
+                echo "${pkg}.${arch} ${version}" >> "${tmpfile_sec}"
+            else
+                echo "${pkg}.${arch} ${version}" >> "${tmpfile_bug}"
+            fi
         fi
     done < <(apt -o APT::Get::Always-Include-Phased-Updates=true list --upgradable 2>/dev/null | grep -v '^Listing' | grep -v '^$')
 
-    rm -f "${_tmpfile_reg_names}"
+    rm -f "${_tmpfile_deferred_names}"
 }
 
 get_repos() {
