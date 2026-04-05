@@ -310,6 +310,21 @@ def _repo_url_candidates(url):
     return unique
 
 
+def _extract_dists_signature(url):
+    """Return the '/dists/...' path suffix of a mirror URL, or None.
+
+    Both 'http://archive.ubuntu.com/ubuntu/dists/noble/main/binary-amd64'
+    and 'https://ubuntu-repo.example.org/dists/noble/main/binary-amd64'
+    share the suffix '/dists/noble/main/binary-amd64', which is enough to
+    identify the same logical repository regardless of the host or base path.
+    """
+    path = urlsplit(str(url or '')).path.rstrip('/')
+    idx = path.find('/dists/')
+    if idx >= 0:
+        return path[idx:]
+    return None
+
+
 def process_repo(r_type, r_name, r_id, r_priority, urls, arch):
     """ Core repo processing logic shared by text and JSON handlers
     """
@@ -331,7 +346,23 @@ def process_repo(r_type, r_name, r_id, r_priority, urls, arch):
             if repository:
                 Mirror.objects.create(repo=repository, url=normalized_url)
             else:
-                unknown.append(normalized_url)
+                # For auto-generated names, try matching by the /dists/... path
+                # suffix so that mirrors of the same content on different hosts
+                # (e.g. a local S3 proxy vs. the upstream archive) are folded
+                # into the existing canonical repository without creating a
+                # duplicate entry with an ugly auto-generated name.
+                matched = False
+                if _is_auto_generated_repo_name(r_name):
+                    sig = _extract_dists_signature(normalized_url)
+                    if sig:
+                        path_mirrors = Mirror.objects.select_related('repo').filter(url__endswith=sig)
+                        path_repos = {m.repo_id: m.repo for m in path_mirrors}
+                        if len(path_repos) == 1:
+                            repository = next(iter(path_repos.values()))
+                            Mirror.objects.get_or_create(repo=repository, url=normalized_url)
+                            matched = True
+                if not matched:
+                    unknown.append(normalized_url)
         else:
             repository = mirror.repo
 
