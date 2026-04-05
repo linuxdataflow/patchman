@@ -14,6 +14,11 @@
 # You should have received a copy of the GNU General Public License
 # along with Patchman. If not, see <http://www.gnu.org/licenses/>
 
+import hashlib
+from urllib.parse import urlencode, urlsplit, urlunsplit
+
+import requests
+from django.core.cache import cache
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.permissions import AllowAny
@@ -21,6 +26,7 @@ from rest_framework.response import Response
 
 from errata.tasks import update_errata as update_errata_task
 from hosts.models import Host
+from hosts.serializers import HostSerializer
 from hosts.tasks import (
     find_all_host_updates,
     find_all_host_updates_homogenous,
@@ -34,6 +40,212 @@ from security.models import CVE
 from security.tasks import update_cve, update_cves
 from util.api_serializers import OperationRequestSerializer
 from util.tasks import clean_database
+
+
+def _append_format_json(url):
+    if not url:
+        return ''
+    if 'format=' in url:
+        return url
+    separator = '&' if '?' in url else '?'
+    return f'{url}{separator}format=json'
+
+
+def _normalize_rundeck_resources(data):
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and isinstance(data.get('resources'), list):
+        return data['resources']
+    if isinstance(data, dict):
+        resources = []
+        for key, item in data.items():
+            normalized = item or {}
+            if not normalized.get('nodename'):
+                normalized['nodename'] = key
+            resources.append(normalized)
+        return resources
+    return []
+
+
+def _normalize_hostname(value):
+    host = str(value or '').strip().lower()
+    if not host:
+        return ''
+    return host.rstrip('.')
+
+
+def _build_resource_indexes(resources):
+    by_name = {}
+    by_short = {}
+    by_ip = {}
+
+    for resource in resources or []:
+        node_name = _normalize_hostname(resource.get('nodename') or resource.get('hostname') or '')
+        if node_name:
+            by_name[node_name] = resource
+            short_name = node_name.split('.', 1)[0]
+            if short_name and short_name not in by_short:
+                by_short[short_name] = resource
+
+        resource_host = str(resource.get('hostname') or '').strip().lower()
+        if resource_host and resource_host not in by_ip:
+            by_ip[resource_host] = resource
+
+    return {
+        'by_name': by_name,
+        'by_short': by_short,
+        'by_ip': by_ip,
+    }
+
+
+def _get_rundeck_resources(rundeck_host, project, token):
+    if not rundeck_host:
+        return []
+
+    token_hash = hashlib.sha256(str(token or '').encode('utf-8')).hexdigest()[:12]
+    cache_key = f'patchman:rundeck-resources:{rundeck_host}:{project}:{token_hash}'
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    clean_host = str(rundeck_host).rstrip('/')
+    project_name = project or 'patchman'
+    url = f'{clean_host}/api/46/project/{project_name}/resources?format=json'
+    headers = {}
+    if token:
+        headers['X-Rundeck-Auth-Token'] = token
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if not response.ok:
+            cache.set(cache_key, [], timeout=20)
+            return []
+        resources = _normalize_rundeck_resources(response.json())
+        cache.set(cache_key, resources, timeout=30)
+        return resources
+    except requests.RequestException:
+        cache.set(cache_key, [], timeout=20)
+        return []
+
+
+class HostInventoryViewSet(viewsets.ViewSet):
+    """Return paged host inventory enriched with Rundeck provider metadata."""
+
+    def get_permissions(self):
+        # Keep read behavior aligned with existing host endpoint usage in plugin.
+        return [AllowAny()]
+
+    def list(self, request):
+        page = max(1, int(request.query_params.get('page', '1') or 1))
+        page_size = int(request.query_params.get('page_size', '50') or 50)
+        page_size = min(max(page_size, 1), 200)
+        search = str(request.query_params.get('search', '') or '').strip().lower()
+        ordering = str(request.query_params.get('ordering', 'hostname') or 'hostname')
+
+        rundeck_host = str(request.query_params.get('rundeck_host', '') or '').strip()
+        rundeck_project = str(request.query_params.get('rundeck_project', 'patchman') or 'patchman').strip()
+        rundeck_token = request.headers.get('X-Rundeck-Auth-Token') or request.query_params.get('rundeck_token', '')
+
+        hosts_qs = Host.objects.select_related('osvariant', 'arch', 'domain').all()
+        hosts = HostSerializer(hosts_qs, many=True, context={'request': request}).data
+
+        resources = _get_rundeck_resources(rundeck_host, rundeck_project, rundeck_token)
+        resource_indexes = _build_resource_indexes(resources)
+
+        merged = []
+        for host in hosts:
+            hostname = host.get('hostname', '')
+            host_name = _normalize_hostname(hostname)
+            short_name = host_name.split('.', 1)[0] if host_name else ''
+            host_ip = str(host.get('ipaddress') or '').strip().lower()
+            matched = (
+                (resource_indexes['by_ip'].get(host_ip) if host_ip else None)
+                or resource_indexes['by_name'].get(host_name)
+                or resource_indexes['by_short'].get(short_name)
+            )
+
+            provider = (matched or {}).get('inventory_provider') or (matched or {}).get('provider') or 'patchman'
+            provider_vm_name = (
+                (matched or {}).get('provider_vm_name')
+                or (matched or {}).get('vm_name')
+                or ((matched or {}).get('attributes') or {}).get('provider_vm_name')
+                or ((matched or {}).get('attributes') or {}).get('vm_name')
+                or ''
+            )
+            provider_instance_id = (
+                (matched or {}).get('provider_instance_id')
+                or ((matched or {}).get('attributes') or {}).get('provider_instance_id')
+                or ''
+            )
+
+            enriched = dict(host)
+            enriched['_provider'] = provider
+            enriched['_providerVmName'] = provider_vm_name
+            enriched['_providerInstanceId'] = provider_instance_id
+            enriched['inventory_state'] = (matched or {}).get('inventory_state') or 'managed'
+            merged.append(enriched)
+
+        if search:
+            def _match(item):
+                haystack = ' '.join([
+                    str(item.get('hostname') or ''),
+                    str(item.get('ipaddress') or ''),
+                    str(item.get('reversedns') or ''),
+                    str(item.get('_provider') or ''),
+                    str(item.get('_providerVmName') or ''),
+                    str(item.get('_providerInstanceId') or ''),
+                    ' '.join(item.get('tags') or []),
+                ]).lower()
+                return search in haystack
+
+            merged = [item for item in merged if _match(item)]
+
+        descending = ordering.startswith('-')
+        sort_field = ordering[1:] if descending else ordering
+        field_map = {
+            'hostname': 'hostname',
+            'ipaddress': 'ipaddress',
+            'lastreport': 'lastreport',
+            'updated_at': 'updated_at',
+            'bugfix_update_count': 'bugfix_update_count',
+            'security_update_count': 'security_update_count',
+            'reboot_required': 'reboot_required',
+            'provider': '_provider',
+            'provider_vm_name': '_providerVmName',
+            'provider_instance_id': '_providerInstanceId',
+        }
+        key_name = field_map.get(sort_field, 'hostname')
+        merged.sort(key=lambda item: str(item.get(key_name) or '').lower(), reverse=descending)
+
+        total = len(merged)
+        start = (page - 1) * page_size
+        end = start + page_size
+        results = merged[start:end]
+
+        def build_page_url(page_number):
+            if page_number < 1:
+                return None
+            if page_number > 1 and (page_number - 1) * page_size >= total:
+                return None
+
+            split = urlsplit(request.build_absolute_uri())
+            query = dict(request.query_params)
+            query['page'] = str(page_number)
+            query['page_size'] = str(page_size)
+            return urlunsplit((split.scheme, split.netloc, split.path, urlencode(query, doseq=True), split.fragment))
+
+        next_url = build_page_url(page + 1)
+        previous_url = build_page_url(page - 1) if page > 1 else None
+
+        return Response(
+            {
+                'count': total,
+                'next': next_url,
+                'previous': previous_url,
+                'results': results,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class OperationViewSet(viewsets.ViewSet):

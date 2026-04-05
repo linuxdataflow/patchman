@@ -58,7 +58,7 @@ def process_report(self, report_id):
             else:
                 try:
                     cache.set(report_host_lock_key, report.id, lock_expire)
-                    report.process()
+                    report.process(find_updates=False)
                 finally:
                     cache.delete(report_host_lock_key)
         finally:

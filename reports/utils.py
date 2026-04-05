@@ -174,13 +174,17 @@ def process_update_text(host, update_string, security):
 def process_update(host, name, epoch, version, release, arch, repo_id, security):
     """ Core update processing logic shared by text and JSON handlers
     """
+    # Determine package type from the host's installed packages; fall back to RPM
+    host_pkg_type = host.packages.values_list('packagetype', flat=True).order_by().first()
+    p_type = host_pkg_type if host_pkg_type else Package.RPM
+
     package = get_or_create_package(
         name=name,
         epoch=epoch,
         version=version,
         release=release,
         arch=arch,
-        p_type=Package.RPM
+        p_type=p_type
     )
     try:
         repo = Repository.objects.get(repo_id=repo_id)
@@ -190,7 +194,7 @@ def process_update(host, name, epoch, version, release, arch, repo_id, security)
         for mirror in repo.mirror_set.all():
             MirrorPackage.objects.create(mirror=mirror, package=package)
 
-    installed_packages = host.packages.filter(name=package.name, arch=package.arch, packagetype=Package.RPM)
+    installed_packages = host.packages.filter(name=package.name, arch=package.arch, packagetype=p_type)
     if installed_packages:
         installed_package = installed_packages[0]
         update = get_or_create_package_update(oldpackage=installed_package, newpackage=package, security=security)
