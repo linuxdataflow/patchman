@@ -84,6 +84,7 @@ class ReportUploadSerializer(serializers.Serializer):
     modules = ModuleSerializer(many=True, required=False, default=list)
     sec_updates = UpdateSerializer(many=True, required=False, default=list)
     bug_updates = UpdateSerializer(many=True, required=False, default=list)
+    installed_packages = UpdateSerializer(many=True, required=False, default=list)
     phased_deferred_updates = UpdateSerializer(many=True, required=False, default=list)
 
     def validate_protocol(self, value):
@@ -95,10 +96,65 @@ class ReportUploadSerializer(serializers.Serializer):
 class ReportSerializer(serializers.HyperlinkedModelSerializer):
     """Serializer for reading Report model instances."""
 
+    installed_packages_count = serializers.SerializerMethodField()
+
+    def get_installed_packages_count(self, obj):
+        if obj.protocol == '2':
+            return len(obj.installed_packages_parsed)
+        if not obj.installed_packages:
+            return 0
+        return len([line for line in obj.installed_packages.splitlines() if line.strip()])
+
     class Meta:
         from reports.models import Report
         model = Report
         fields = (
             'id', 'host', 'domain', 'tags', 'kernel', 'arch', 'os',
-            'report_ip', 'protocol', 'useragent', 'processed', 'created'
+            'report_ip', 'protocol', 'useragent', 'processed', 'created',
+            'installed_packages_count'
         )
+
+
+class ReportDetailSerializer(ReportSerializer):
+    """Serializer for report detail responses with full installed package list."""
+
+    installed_packages = serializers.SerializerMethodField()
+
+    def get_installed_packages(self, obj):
+        if obj.protocol == '2':
+            return obj.installed_packages_parsed
+
+        parsed = []
+        if not obj.installed_packages:
+            return parsed
+
+        for line in obj.installed_packages.splitlines():
+            row = line.strip()
+            if not row:
+                continue
+
+            parts = row.split()
+            if len(parts) < 2:
+                continue
+
+            name_arch = parts[0]
+            version = parts[1]
+            repo = parts[2] if len(parts) > 2 else ''
+
+            if '.' in name_arch:
+                name, arch = name_arch.rsplit('.', 1)
+            else:
+                name = name_arch
+                arch = ''
+
+            parsed.append({
+                'name': name,
+                'version': version,
+                'arch': arch,
+                'repo': repo,
+            })
+
+        return parsed
+
+    class Meta(ReportSerializer.Meta):
+        fields = ReportSerializer.Meta.fields + ('installed_packages',)

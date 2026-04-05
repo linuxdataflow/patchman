@@ -24,6 +24,9 @@
   {% if report.has_bug_updates %}
     <li><a data-toggle="tab" href="#report_bugupdates">Bugfix Updates</a></li>
   {% endif %}
+  {% if report.has_installed_packages %}
+    <li><a data-toggle="tab" href="#report_installed">Installed (Last APT Run)</a></li>
+  {% endif %}
   {% if report.has_packages %}
     <li><a data-toggle="tab" href="#report_packages">Packages</a></li>
   {% endif %}
@@ -114,6 +117,24 @@
         {% else %}
           <table class="table table-striped table-bordered table-hover table-condensed table-responsive">
             {% for update in report.bug_updates.splitlines %}
+              <tr>
+                <td> {{ update }} </td>
+              </tr>
+            {% endfor %}
+          </table>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if report.has_installed_packages %}
+    <div class="tab-pane fade in" id="report_installed">
+      <div class="well well-sm">
+        {% if installed_packages_table %}
+          {% render_table installed_packages_table %}
+        {% else %}
+          <table class="table table-striped table-bordered table-hover table-condensed table-responsive">
+            {% for update in report.installed_packages.splitlines %}
               <tr>
                 <td> {{ update }} </td>
               </tr>

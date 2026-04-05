@@ -93,6 +93,7 @@ cleanup() {
         echo "Debug: not deleting ${tmpfile_rep} (repos)"
         echo "Debug: not deleting ${tmpfile_sec} (security updates)"
         echo "Debug: not deleting ${tmpfile_bug} (updates)"
+        echo "Debug: not deleting ${tmpfile_installed} (installed packages)"
         echo "Debug: not deleting ${tmpfile_phased} (phased updates)"
         echo "Debug: not deleting ${tmpfile_mod} (modules)"
         if [ ! -z "${tmpfile_packages_json}" ] ; then
@@ -101,6 +102,7 @@ cleanup() {
             echo "Debug: not deleting ${tmpfile_modules_json} (modules json)"
             echo "Debug: not deleting ${tmpfile_sec_json} (security updates json)"
             echo "Debug: not deleting ${tmpfile_bug_json} (bug updates json)"
+            echo "Debug: not deleting ${tmpfile_installed_json} (installed packages json)"
             echo "Debug: not deleting ${tmpfile_phased_json} (phased updates json)"
             echo "Debug: not deleting ${tmpfile_report_json} (full report json)"
         fi
@@ -109,6 +111,7 @@ cleanup() {
         echo "Deleting ${tmpfile_rep}"
         echo "Deleting ${tmpfile_sec}"
         echo "Deleting ${tmpfile_bug}"
+        echo "Deleting ${tmpfile_installed}"
         echo "Deleting ${tmpfile_mod}"
     fi
     if ! ${debug} ; then
@@ -116,6 +119,7 @@ cleanup() {
         rm -fr "${tmpfile_rep}"
         rm -fr "${tmpfile_sec}"
         rm -fr "${tmpfile_bug}"
+        rm -fr "${tmpfile_installed}"
         rm -fr "${tmpfile_phased}"
         rm -fr "${tmpfile_mod}"
         rm -fr "${tmpfile_packages_json}"
@@ -123,6 +127,7 @@ cleanup() {
         rm -fr "${tmpfile_modules_json}"
         rm -fr "${tmpfile_sec_json}"
         rm -fr "${tmpfile_bug_json}"
+        rm -fr "${tmpfile_installed_json}"
         rm -fr "${tmpfile_phased_json}"
         rm -fr "${tmpfile_report_json}"
     fi
@@ -587,6 +592,102 @@ get_apt_updates() {
     rm -f "${_tmpfile_deferred_names}"
 }
 
+get_last_apt_installed_packages() {
+    if [ ! -f /var/log/apt/history.log ] ; then
+        return
+    fi
+
+    if ${verbose} ; then
+        echo 'Finding packages installed/upgraded in latest apt transaction...'
+    fi
+
+    local latest_install_line
+    local latest_upgrade_line
+    local apt_entries
+
+    latest_install_line=$(awk '
+        /^Start-Date:/ { in_block=1; install_line=""; upgrade_line=""; next }
+        in_block && /^Install: / { install_line=substr($0, 10); next }
+        in_block && /^Upgrade: / { upgrade_line=substr($0, 10); next }
+        in_block && /^End-Date:/ {
+            last_install=install_line;
+            last_upgrade=upgrade_line;
+            in_block=0;
+        }
+        END {
+            print last_install;
+            print last_upgrade;
+        }
+    ' /var/log/apt/history.log | sed -n '1p')
+
+    latest_upgrade_line=$(awk '
+        /^Start-Date:/ { in_block=1; install_line=""; upgrade_line=""; next }
+        in_block && /^Install: / { install_line=substr($0, 10); next }
+        in_block && /^Upgrade: / { upgrade_line=substr($0, 10); next }
+        in_block && /^End-Date:/ {
+            last_install=install_line;
+            last_upgrade=upgrade_line;
+            in_block=0;
+        }
+        END {
+            print last_install;
+            print last_upgrade;
+        }
+    ' /var/log/apt/history.log | sed -n '2p')
+
+    apt_entries="${latest_install_line}"
+    if [ ! -z "${latest_upgrade_line}" ] ; then
+        if [ ! -z "${apt_entries}" ] ; then
+            apt_entries="${apt_entries}, ${latest_upgrade_line}"
+        else
+            apt_entries="${latest_upgrade_line}"
+        fi
+    fi
+
+    if [ -z "${apt_entries}" ] ; then
+        return
+    fi
+
+    while IFS= read -r entry ; do
+        if [ -z "${entry}" ] ; then
+            continue
+        fi
+
+        local name_arch details name arch version candidate
+        name_arch=$(echo "${entry}" | sed -E 's/ \(.*$//')
+        details=$(echo "${entry}" | sed -E 's/^.*\((.*)\)$/\1/')
+
+        name=$(echo "${name_arch}" | cut -d ':' -f 1)
+        arch=$(echo "${name_arch}" | cut -d ':' -f 2)
+        if [ -z "${arch}" ] ; then
+            arch="amd64"
+        fi
+
+        if echo "${details}" | grep -q "," ; then
+            candidate=$(echo "${details}" | awk -F', ' '{print $2}')
+            if echo "${candidate}" | grep -qi '^automatic$' ; then
+                version=$(echo "${details}" | awk -F', ' '{print $1}')
+            else
+                version="${candidate}"
+            fi
+        else
+            version="${details}"
+        fi
+
+        version=$(echo "${version}" | sed -E 's/^ +//; s/ +$//')
+
+        if [ -z "${name}" ] || [ -z "${version}" ] ; then
+            continue
+        fi
+
+        echo "${name}.${arch} ${version} apt-history" >> "${tmpfile_installed}"
+    done < <(echo "${apt_entries}" | grep -oE "[^, ]+:[^, ]+ \([^)]*\)")
+
+    if [ -s "${tmpfile_installed}" ] ; then
+        sort -u "${tmpfile_installed}" -o "${tmpfile_installed}"
+    fi
+}
+
 get_repos() {
     IFS=${NL_IFS}
 
@@ -1000,6 +1101,7 @@ build_json_report() {
     build_modules_json "${tmpfile_modules_json}"
     build_updates_json "${tmpfile_sec}" "${tmpfile_sec_json}"
     build_updates_json "${tmpfile_bug}" "${tmpfile_bug_json}"
+    build_updates_json "${tmpfile_installed}" "${tmpfile_installed_json}"
     build_updates_json "${tmpfile_phased}" "${tmpfile_phased_json}"
 
     # Convert tags to JSON array
@@ -1027,6 +1129,7 @@ build_json_report() {
         --slurpfile modules "${tmpfile_modules_json}" \
         --slurpfile sec_updates "${tmpfile_sec_json}" \
         --slurpfile bug_updates "${tmpfile_bug_json}" \
+        --slurpfile installed_packages "${tmpfile_installed_json}" \
         --slurpfile phased_updates "${tmpfile_phased_json}" \
         '{
             protocol: $protocol,
@@ -1041,6 +1144,7 @@ build_json_report() {
             modules: $modules[0],
             sec_updates: $sec_updates[0],
             bug_updates: $bug_updates[0],
+            installed_packages: $installed_packages[0],
             phased_deferred_updates: $phased_updates[0]
         }'
 }
@@ -1062,6 +1166,7 @@ post_json_data() {
     tmpfile_modules_json=$(mktemp)
     tmpfile_sec_json=$(mktemp)
     tmpfile_bug_json=$(mktemp)
+    tmpfile_installed_json=$(mktemp)
     tmpfile_phased_json=$(mktemp)
     tmpfile_report_json=$(mktemp)
 
@@ -1129,6 +1234,7 @@ post_data() {
     curl_opts="${curl_opts} -F repos=\<${tmpfile_rep}"
     curl_opts="${curl_opts} -F sec_updates=\<${tmpfile_sec}"
     curl_opts="${curl_opts} -F bug_updates=\<${tmpfile_bug}"
+    curl_opts="${curl_opts} -F installed_packages=\<${tmpfile_installed}"
     curl_opts="${curl_opts} -F modules=\<${tmpfile_mod}"
     curl_opts="${curl_opts} -F reboot=\"${reboot}\""
     post_command="curl ${curl_opts} ${server%/}/reports/upload/"
@@ -1186,6 +1292,7 @@ tmpfile_pkg=$(mktemp)
 tmpfile_rep=$(mktemp)
 tmpfile_sec=$(mktemp)
 tmpfile_bug=$(mktemp)
+tmpfile_installed=$(mktemp)
 tmpfile_mod=$(mktemp)
 tmpfile_phased=$(mktemp)
 
@@ -1198,6 +1305,7 @@ fi
 if ${local_updates} ; then
     get_apt_updates
 fi
+get_last_apt_installed_packages
 reboot_required
 
 if ${dry_run} ; then
@@ -1212,6 +1320,7 @@ if ${dry_run} ; then
     echo "Modules: $(wc -l < ${tmpfile_mod})"
     echo "Security updates: $(wc -l < ${tmpfile_sec})"
     echo "Bugfix updates: $(wc -l < ${tmpfile_bug})"
+    echo "Installed packages (last apt run): $(wc -l < ${tmpfile_installed})"
     echo "Reboot required: ${reboot}"
     if [ ! -z "${tags}" ] ; then
         echo "Tags: ${tags}"

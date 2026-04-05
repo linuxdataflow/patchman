@@ -27,3 +27,7 @@ security updates:
 bugfix updates:
 {% for u in bug_updates.splitlines %} {{ u|safe }}
 {% endfor %}{% endif %}
+{% if installed_packages %}
+installed packages (last apt run):
+{% for u in installed_packages.splitlines %} {{ u|safe }}
+{% endfor %}{% endif %}

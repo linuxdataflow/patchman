@@ -41,6 +41,7 @@ class Report(models.Model):
     packages = models.TextField(null=True, blank=True)
     sec_updates = models.TextField(null=True, blank=True)
     bug_updates = models.TextField(null=True, blank=True)
+    installed_packages = models.TextField(null=True, blank=True)
     phased_deferred_updates = models.TextField(null=True, blank=True)
     repos = models.TextField(null=True, blank=True)
     modules = models.TextField(null=True, blank=True)
@@ -108,6 +109,16 @@ class Report(models.Model):
         return []
 
     @property
+    def installed_packages_parsed(self):
+        """Parse installed packages JSON for Protocol 2 reports."""
+        if self.protocol == '2' and self.installed_packages:
+            try:
+                return json.loads(self.installed_packages)
+            except json.JSONDecodeError:
+                return []
+        return []
+
+    @property
     def phased_deferred_updates_parsed(self):
         """Parse phased deferred updates JSON for Protocol 2 reports."""
         if self.protocol == '2' and self.phased_deferred_updates:
@@ -155,6 +166,13 @@ class Report(models.Model):
         if self.protocol == '2':
             return bool(self.bug_updates_parsed)
         return bool(self.bug_updates and self.bug_updates.strip())
+
+    @property
+    def has_installed_packages(self):
+        """Check if report has installed packages from last apt run."""
+        if self.protocol == '2':
+            return bool(self.installed_packages_parsed)
+        return bool(self.installed_packages and self.installed_packages.strip())
 
     @property
     def has_phased_deferred_updates(self):
@@ -217,6 +235,7 @@ class Report(models.Model):
                  'tags',
                  'sec_updates',
                  'bug_updates',
+                 'installed_packages',
                  'phased_deferred_updates',
                  'repos',
                  'modules',

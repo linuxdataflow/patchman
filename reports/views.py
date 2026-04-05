@@ -38,7 +38,11 @@ from tenacity import (
 )
 
 from reports.models import Report
-from reports.serializers import ReportSerializer, ReportUploadSerializer
+from reports.serializers import (
+    ReportDetailSerializer,
+    ReportSerializer,
+    ReportUploadSerializer,
+)
 from reports.tables import (
     ReportModuleTable, ReportPackageTable, ReportRepoTable, ReportTable,
     ReportUpdateTable,
@@ -97,6 +101,7 @@ def upload(request):
             modules = data.get('modules')
             sec_updates = data.get('sec_updates')
             bug_updates = data.get('bug_updates')
+            installed_packages = data.get('installed_packages')
             return render(request,
                           'reports/report.txt',
                           {'data': data,
@@ -104,6 +109,7 @@ def upload(request):
                            'modules': modules,
                            'sec_updates': sec_updates,
                            'bug_updates': bug_updates,
+                           'installed_packages': installed_packages,
                            'repos': repos},
                           content_type='text/plain')
         else:
@@ -176,6 +182,8 @@ def report_detail(request, report_id):
             context['sec_updates_table'] = ReportUpdateTable(report.sec_updates_parsed)
         if report.has_bug_updates:
             context['bug_updates_table'] = ReportUpdateTable(report.bug_updates_parsed)
+        if report.has_installed_packages:
+            context['installed_packages_table'] = ReportUpdateTable(report.installed_packages_parsed)
 
     return render(request,
                   'reports/report_detail.html',
@@ -293,7 +301,7 @@ class ReportViewSet(viewsets.ViewSet):
     def retrieve(self, request, pk=None):
         """Retrieve a single report."""
         report = get_object_or_404(Report, pk=pk)
-        serializer = ReportSerializer(report, context={'request': request})
+        serializer = ReportDetailSerializer(report, context={'request': request})
         return Response(serializer.data)
 
     def create(self, request):
@@ -346,6 +354,7 @@ class ReportViewSet(viewsets.ViewSet):
             modules=json.dumps(data.get('modules', [])),
             sec_updates=json.dumps(data.get('sec_updates', [])),
             bug_updates=json.dumps(data.get('bug_updates', [])),
+            installed_packages=json.dumps(data.get('installed_packages', [])),
             phased_deferred_updates=json.dumps(data.get('phased_deferred_updates', [])),
             reboot=reboot,
         )
