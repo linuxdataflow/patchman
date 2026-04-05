@@ -88,6 +88,7 @@ cleanup() {
         echo "Debug: not deleting ${tmpfile_rep} (repos)"
         echo "Debug: not deleting ${tmpfile_sec} (security updates)"
         echo "Debug: not deleting ${tmpfile_bug} (updates)"
+        echo "Debug: not deleting ${tmpfile_phased} (phased updates)"
         echo "Debug: not deleting ${tmpfile_mod} (modules)"
         if [ ! -z "${tmpfile_packages_json}" ] ; then
             echo "Debug: not deleting ${tmpfile_packages_json} (packages json)"
@@ -95,6 +96,7 @@ cleanup() {
             echo "Debug: not deleting ${tmpfile_modules_json} (modules json)"
             echo "Debug: not deleting ${tmpfile_sec_json} (security updates json)"
             echo "Debug: not deleting ${tmpfile_bug_json} (bug updates json)"
+            echo "Debug: not deleting ${tmpfile_phased_json} (phased updates json)"
             echo "Debug: not deleting ${tmpfile_report_json} (full report json)"
         fi
     elif ${verbose} && ! ${debug} ; then
@@ -109,12 +111,14 @@ cleanup() {
         rm -fr "${tmpfile_rep}"
         rm -fr "${tmpfile_sec}"
         rm -fr "${tmpfile_bug}"
+        rm -fr "${tmpfile_phased}"
         rm -fr "${tmpfile_mod}"
         rm -fr "${tmpfile_packages_json}"
         rm -fr "${tmpfile_repos_json}"
         rm -fr "${tmpfile_modules_json}"
         rm -fr "${tmpfile_sec_json}"
         rm -fr "${tmpfile_bug_json}"
+        rm -fr "${tmpfile_phased_json}"
         rm -fr "${tmpfile_report_json}"
     fi
     flock -u 200
@@ -514,7 +518,12 @@ get_apt_updates() {
     if ${verbose} ; then
         echo 'Finding apt updates...'
     fi
-    apt list --upgradable 2>/dev/null | grep -v '^Listing' | while IFS= read -r line ; do
+    # Collect regular upgradable packages (phased packages excluded by default).
+    # Use process substitution to keep the loop in the current shell so tmpfile
+    # writes are visible outside the loop.
+    local _tmpfile_reg_names
+    _tmpfile_reg_names=$(mktemp)
+    while IFS= read -r line ; do
         if [ -z "${line}" ] ; then
             continue
         fi
@@ -523,12 +532,29 @@ get_apt_updates() {
         suite=$(echo "${line}" | cut -d '/' -f 2 | cut -d ' ' -f 1)
         version=$(echo "${line}" | awk '{print $2}')
         arch=$(echo "${line}" | awk '{print $3}')
+        echo "${pkg}" >> "${_tmpfile_reg_names}"
         if echo "${suite}" | grep -qi 'security' ; then
             echo "${pkg}.${arch} ${version}" >> "${tmpfile_sec}"
         else
             echo "${pkg}.${arch} ${version}" >> "${tmpfile_bug}"
         fi
-    done
+    done < <(apt list --upgradable 2>/dev/null | grep -v '^Listing' | grep -v '^$')
+
+    # Detect phased updates: packages present when Always-Include-Phased-Updates
+    # is forced but absent from the default listing above.
+    while IFS= read -r line ; do
+        if [ -z "${line}" ] ; then
+            continue
+        fi
+        pkg=$(echo "${line}" | cut -d '/' -f 1)
+        version=$(echo "${line}" | awk '{print $2}')
+        arch=$(echo "${line}" | awk '{print $3}')
+        if ! grep -qxF "${pkg}" "${_tmpfile_reg_names}" ; then
+            echo "${pkg}.${arch} ${version}" >> "${tmpfile_phased}"
+        fi
+    done < <(apt -o APT::Get::Always-Include-Phased-Updates=true list --upgradable 2>/dev/null | grep -v '^Listing' | grep -v '^$')
+
+    rm -f "${_tmpfile_reg_names}"
 }
 
 get_repos() {
@@ -944,6 +970,7 @@ build_json_report() {
     build_modules_json "${tmpfile_modules_json}"
     build_updates_json "${tmpfile_sec}" "${tmpfile_sec_json}"
     build_updates_json "${tmpfile_bug}" "${tmpfile_bug_json}"
+    build_updates_json "${tmpfile_phased}" "${tmpfile_phased_json}"
 
     # Convert tags to JSON array
     local tags_json="[]"
@@ -970,6 +997,7 @@ build_json_report() {
         --slurpfile modules "${tmpfile_modules_json}" \
         --slurpfile sec_updates "${tmpfile_sec_json}" \
         --slurpfile bug_updates "${tmpfile_bug_json}" \
+        --slurpfile phased_updates "${tmpfile_phased_json}" \
         '{
             protocol: $protocol,
             hostname: $hostname,
@@ -982,7 +1010,8 @@ build_json_report() {
             repos: $repos[0],
             modules: $modules[0],
             sec_updates: $sec_updates[0],
-            bug_updates: $bug_updates[0]
+            bug_updates: $bug_updates[0],
+            phased_deferred_updates: $phased_updates[0]
         }'
 }
 
@@ -1003,6 +1032,7 @@ post_json_data() {
     tmpfile_modules_json=$(mktemp)
     tmpfile_sec_json=$(mktemp)
     tmpfile_bug_json=$(mktemp)
+    tmpfile_phased_json=$(mktemp)
     tmpfile_report_json=$(mktemp)
 
     # Build JSON report to temp file
@@ -1127,6 +1157,7 @@ tmpfile_rep=$(mktemp)
 tmpfile_sec=$(mktemp)
 tmpfile_bug=$(mktemp)
 tmpfile_mod=$(mktemp)
+tmpfile_phased=$(mktemp)
 
 get_host_data
 get_packages
