@@ -17,6 +17,7 @@
 
 import json
 import re
+from urllib.parse import urlsplit, urlunsplit
 
 from django.db import IntegrityError
 
@@ -268,6 +269,47 @@ def _get_repo_type(type_str):
     return None
 
 
+def _is_auto_generated_repo_name(name):
+    name = str(name or '').strip().lower()
+    return ' repo at http://' in name or ' repo at https://' in name
+
+
+def _normalize_repo_url(url):
+    clean = str(url or '').strip().rstrip('/')
+    if not clean:
+        return ''
+
+    parsed = urlsplit(clean)
+    scheme = parsed.scheme.lower()
+    netloc = parsed.netloc.lower()
+
+    if scheme and netloc:
+        return urlunsplit((scheme, netloc, parsed.path.rstrip('/'), parsed.query, parsed.fragment))
+    return clean
+
+
+def _repo_url_candidates(url):
+    normalized = _normalize_repo_url(url)
+    if not normalized:
+        return []
+
+    parsed = urlsplit(normalized)
+    candidates = [normalized]
+
+    if parsed.scheme == 'http':
+        candidates.append(urlunsplit(('https', parsed.netloc, parsed.path, parsed.query, parsed.fragment)))
+    elif parsed.scheme == 'https':
+        candidates.append(urlunsplit(('http', parsed.netloc, parsed.path, parsed.query, parsed.fragment)))
+
+    seen = set()
+    unique = []
+    for candidate in candidates:
+        if candidate not in seen:
+            seen.add(candidate)
+            unique.append(candidate)
+    return unique
+
+
 def process_repo(r_type, r_name, r_id, r_priority, urls, arch):
     """ Core repo processing logic shared by text and JSON handlers
     """
@@ -277,15 +319,19 @@ def process_repo(r_type, r_name, r_id, r_priority, urls, arch):
     unknown = []
 
     for r_url in urls:
-        if r_type == Repository.GENTOO and r_url.startswith('rsync'):
-            r_url = 'https://api.gentoo.org/mirrors/distfiles.xml'
+        normalized_url = _normalize_repo_url(r_url)
+        if not normalized_url:
+            continue
+
+        if r_type == Repository.GENTOO and normalized_url.startswith('rsync'):
+            normalized_url = 'https://api.gentoo.org/mirrors/distfiles.xml'
         try:
-            mirror = Mirror.objects.get(url=r_url.strip('/'))
+            mirror = Mirror.objects.select_related('repo').get(url__in=_repo_url_candidates(normalized_url))
         except Mirror.DoesNotExist:
             if repository:
-                Mirror.objects.create(repo=repository, url=r_url.rstrip('/'))
+                Mirror.objects.create(repo=repository, url=normalized_url)
             else:
-                unknown.append(r_url)
+                unknown.append(normalized_url)
         else:
             repository = mirror.repo
 
@@ -296,10 +342,14 @@ def process_repo(r_type, r_name, r_id, r_priority, urls, arch):
         repository.repo_id = r_id
 
     if r_name and repository.name != r_name:
-        repository.name = r_name
+        # Preserve curated names when incoming client names are auto-generated.
+        if _is_auto_generated_repo_name(r_name) and not _is_auto_generated_repo_name(repository.name):
+            pass
+        else:
+            repository.name = r_name
 
     for url in unknown:
-        Mirror.objects.create(repo=repository, url=url.rstrip('/'))
+        Mirror.objects.create(repo=repository, url=url)
 
     for mirror in Mirror.objects.filter(repo=repository).values('url'):
         mirror_url = mirror.get('url')

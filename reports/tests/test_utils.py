@@ -227,6 +227,51 @@ class ProcessRepoTests(TestCase):
         # RPM priority is negated
         self.assertEqual(priority, -99)
 
+    def test_process_repo_reuses_existing_mirror_across_http_https(self):
+        """Test process_repo reuses an existing repo when only URL scheme differs."""
+        arch = MachineArchitecture.objects.create(name='x86_64')
+        existing = Repository.objects.create(
+            name='Ubuntu 24.04 noble main',
+            arch=arch,
+            repotype=Repository.DEB,
+        )
+        Mirror.objects.create(repo=existing, url='http://archive.ubuntu.com/ubuntu/dists/noble/main/binary-amd64')
+
+        repo, _ = process_repo(
+            r_type=Repository.DEB,
+            r_name='Ubuntu 24.04 x86_64 repo at https://archive.ubuntu.com/ubuntu/dists/noble/main/binary-amd64',
+            r_id='ubuntu-main',
+            r_priority=500,
+            urls=['https://archive.ubuntu.com/ubuntu/dists/noble/main/binary-amd64'],
+            arch='x86_64',
+        )
+
+        self.assertEqual(repo.id, existing.id)
+        self.assertEqual(Repository.objects.count(), 1)
+
+    def test_process_repo_does_not_overwrite_curated_name_with_auto_generated(self):
+        """Test process_repo keeps curated name when incoming name is auto-generated."""
+        arch = MachineArchitecture.objects.create(name='x86_64')
+        existing = Repository.objects.create(
+            name='Ubuntu 24.04 noble main',
+            arch=arch,
+            repotype=Repository.DEB,
+        )
+        Mirror.objects.create(repo=existing, url='http://archive.ubuntu.com/ubuntu/dists/noble/main/binary-amd64')
+
+        repo, _ = process_repo(
+            r_type=Repository.DEB,
+            r_name='Ubuntu 24.04 x86_64 repo at https://archive.ubuntu.com/ubuntu/dists/noble/main/binary-amd64',
+            r_id='ubuntu-main',
+            r_priority=500,
+            urls=['https://archive.ubuntu.com/ubuntu/dists/noble/main/binary-amd64'],
+            arch='x86_64',
+        )
+
+        repo.refresh_from_db()
+        self.assertEqual(repo.id, existing.id)
+        self.assertEqual(repo.name, 'Ubuntu 24.04 noble main')
+
 
 @override_settings(
     CELERY_TASK_ALWAYS_EAGER=True,
