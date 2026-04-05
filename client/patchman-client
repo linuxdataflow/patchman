@@ -15,6 +15,11 @@ repo_check=true
 dry_run=false
 tags=''
 api_key=''
+cli_verbose=''
+cli_debug=''
+cli_repo_check=''
+cli_local_updates=''
+cli_dry_run=''
 
 usage() {
     echo "${0} [-v] [-d] [-n] [-u] [-y] [-r] [-s SERVER] [-c FILE] [-t TAGS] [-H HOSTNAME] [-p PROTOCOL] [-k API_KEY]"
@@ -39,20 +44,20 @@ parseopts() {
     while getopts "vdnuyrs:c:t:h:H:p:k:" opt; do
         case ${opt} in
         v)
-            verbose=true
+            cli_verbose=true
             ;;
         d)
-            debug=true
-            verbose=true
+            cli_debug=true
+            cli_verbose=true
             ;;
         n)
-            repo_check=false
+            cli_repo_check=false
             ;;
         u)
-            local_updates=true
+            cli_local_updates=true
             ;;
         y)
-            dry_run=true
+            cli_dry_run=true
             ;;
         r)
             cli_report=true
@@ -168,6 +173,27 @@ check_conf() {
 
     if [ ! -z "${cli_report}" ] ; then
         report=${cli_report}
+    fi
+
+    if [ ! -z "${cli_local_updates}" ] ; then
+        local_updates=${cli_local_updates}
+    fi
+
+    if [ ! -z "${cli_repo_check}" ] ; then
+        repo_check=${cli_repo_check}
+    fi
+
+    if [ ! -z "${cli_dry_run}" ] ; then
+        dry_run=${cli_dry_run}
+    fi
+
+    if [ ! -z "${cli_verbose}" ] ; then
+        verbose=${cli_verbose}
+    fi
+
+    if [ ! -z "${cli_debug}" ] ; then
+        debug=${cli_debug}
+        verbose=true
     fi
 
     if [ ! -z "${cli_tags}" ] ; then
