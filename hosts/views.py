@@ -24,7 +24,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django_filters import rest_framework as filters
 from django_tables2 import RequestConfig
-from rest_framework import viewsets
+from rest_framework import filters as drf_filters, pagination, viewsets
 from taggit.models import Tag
 
 from arch.models import MachineArchitecture
@@ -280,6 +280,7 @@ def host_bulk_action(request):
 
 
 class HostFilter(filters.FilterSet):
+    search = filters.CharFilter(method='filter_search')
     package_id = filters.NumberFilter(field_name='packages', lookup_expr='exact')
     package_name = filters.CharFilter(field_name='packages__name__name', lookup_expr='exact')
     package_version = filters.CharFilter(field_name='packages__version', lookup_expr='exact')
@@ -288,9 +289,29 @@ class HostFilter(filters.FilterSet):
     package_arch = filters.CharFilter(field_name='packages__arch__name', lookup_expr='exact')
     tag = filters.CharFilter(field_name='tags__name', lookup_expr='exact')
 
+    def filter_search(self, queryset, name, value):
+        terms = [term.strip() for term in str(value).split(' ') if term.strip()]
+        if not terms:
+            return queryset
+
+        for term in terms:
+            queryset = queryset.filter(
+                Q(hostname__icontains=term)
+                | Q(ipaddress__icontains=term)
+                | Q(reversedns__icontains=term)
+                | Q(tags__name__icontains=term)
+            )
+        return queryset.distinct()
+
     class Meta:
         model = Host
-        fields = ['hostname']
+        fields = ['hostname', 'search']
+
+
+class HostPagination(pagination.PageNumberPagination):
+    page_size = 100
+    page_size_query_param = 'page_size'
+    max_page_size = 200
 
 
 class HostViewSet(viewsets.ModelViewSet):
@@ -300,6 +321,23 @@ class HostViewSet(viewsets.ModelViewSet):
     queryset = Host.objects.select_related('osvariant', 'arch', 'domain').all()
     serializer_class = HostSerializer
     filterset_class = HostFilter
+    filter_backends = [filters.DjangoFilterBackend, drf_filters.OrderingFilter]
+    ordering_fields = {
+        'hostname': 'hostname',
+        'ipaddress': 'ipaddress',
+        'lastreport': 'lastreport',
+        'updated_at': 'updated_at',
+        'bugfix_update_count': 'calc_bug_updates_count',
+        'security_update_count': 'calc_sec_updates_count',
+        'local_bugfix_update_count': 'local_bug_updates_count',
+        'local_security_update_count': 'local_sec_updates_count',
+        'local_phased_deferred_count': 'local_phased_deferred_count',
+        'calculated_bugfix_update_count': 'calc_bug_updates_count',
+        'calculated_security_update_count': 'calc_sec_updates_count',
+        'reboot_required': 'reboot_required',
+    }
+    ordering = ['hostname']
+    pagination_class = HostPagination
 
 
 class HostRepoViewSet(viewsets.ModelViewSet):

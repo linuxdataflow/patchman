@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with Patchman. If not, see <http://www.gnu.org/licenses/>
 
+import json
 import re
 
 from django.db import IntegrityError
@@ -77,12 +78,9 @@ def process_modules(report, host):
             module = process_module_text(module_str)
             if module:
                 module_ids.append(module.id)
-                host.modules.add(module)
             pbar_update.send(sender=None, index=i + 1)
 
-        for module in host.modules.all():
-            if module.id not in module_ids:
-                host.modules.remove(module)
+        host.modules.set(module_ids)
 
 
 def process_packages(report, host):
@@ -98,15 +96,12 @@ def process_packages(report, host):
             package = process_package_text(pkg_str)
             if package:
                 package_ids.append(package.id)
-                host.packages.add(package)
             else:
                 if pkg_str[0].lower() != 'gpg-pubkey':
                     info_message(text=f'No package returned for {pkg_str}')
             pbar_update.send(sender=None, index=i + 1)
 
-        for package in host.packages.all():
-            if package.id not in package_ids:
-                host.packages.remove(package)
+        host.packages.set(package_ids)
 
 
 def process_updates(report, host):
@@ -119,6 +114,8 @@ def process_updates(report, host):
     if report.sec_updates:
         sec_updates = parse_updates(report.sec_updates, True)
     updates = merge_updates(sec_updates, bug_updates)
+    phased_count = parse_phased_deferred_updates_count(report)
+    set_local_update_counts(host, len(sec_updates), len(bug_updates), phased_count)
     if updates:
         add_updates(updates, host)
 
@@ -136,16 +133,16 @@ def merge_updates(sec_updates, bug_updates):
 def add_updates(updates, host):
     """ Add updates to a Host
     """
-    for host_update in host.updates.all():
-        host.updates.remove(host_update)
     ulen = len(updates)
+    update_ids = []
     if ulen > 0:
         pbar_start.send(sender=None, ptext=f'{host} Updates', plen=ulen)
         for i, (u, sec) in enumerate(updates.items()):
             update = process_update_text(host, u, sec)
             if update:
-                host.updates.add(update)
+                update_ids.append(update.id)
             pbar_update.send(sender=None, index=i + 1)
+    host.updates.set(update_ids)
 
 
 def parse_updates(updates_string, security):
@@ -159,6 +156,42 @@ def parse_updates(updates_string, security):
         del ulist[:3]
         updates[name] = security
     return updates
+
+
+def parse_phased_deferred_updates_count(report):
+    """Count phased deferred updates from report payloads.
+
+    Protocol 2 uses JSON and supports either a list or a dict with an
+    "updates" list. Protocol 1 can send newline-delimited values.
+    """
+    payload = report.phased_deferred_updates
+    if not payload:
+        return 0
+
+    if report.protocol == '2':
+        try:
+            parsed = json.loads(payload)
+            if isinstance(parsed, list):
+                return len(parsed)
+            if isinstance(parsed, dict) and isinstance(parsed.get('updates'), list):
+                return len(parsed['updates'])
+        except (TypeError, json.JSONDecodeError):
+            return 0
+        return 0
+
+    return len([line for line in str(payload).splitlines() if line.strip()])
+
+
+def set_local_update_counts(host, sec_count, bug_count, phased_count=0):
+    """Persist local (client-reported) update counters on host."""
+    host.local_sec_updates_count = max(int(sec_count or 0), 0)
+    host.local_bug_updates_count = max(int(bug_count or 0), 0)
+    host.local_phased_deferred_count = max(int(phased_count or 0), 0)
+    host.save(update_fields=[
+        'local_sec_updates_count',
+        'local_bug_updates_count',
+        'local_phased_deferred_count',
+    ])
 
 
 def process_update_text(host, update_string, security):
@@ -180,13 +213,17 @@ def process_update_text(host, update_string, security):
 def process_update(host, name, epoch, version, release, arch, repo_id, security):
     """ Core update processing logic shared by text and JSON handlers
     """
+    # Determine package type from the host's installed packages; fall back to RPM
+    host_pkg_type = host.packages.values_list('packagetype', flat=True).order_by().first()
+    p_type = host_pkg_type if host_pkg_type else Package.RPM
+
     package = get_or_create_package(
         name=name,
         epoch=epoch,
         version=version,
         release=release,
         arch=arch,
-        p_type=Package.RPM
+        p_type=p_type
     )
     try:
         repo = Repository.objects.get(repo_id=repo_id)
@@ -196,7 +233,7 @@ def process_update(host, name, epoch, version, release, arch, repo_id, security)
         for mirror in repo.mirror_set.all():
             MirrorPackage.objects.create(mirror=mirror, package=package)
 
-    installed_packages = host.packages.filter(name=package.name, arch=package.arch, packagetype=Package.RPM)
+    installed_packages = host.packages.filter(name=package.name, arch=package.arch, packagetype=p_type)
     if installed_packages:
         installed_package = installed_packages[0]
         update = get_or_create_package_update(oldpackage=installed_package, newpackage=package, security=security)
@@ -439,15 +476,12 @@ def process_packages_json(packages_json, host):
         package = process_package_json(pkg)
         if package:
             package_ids.append(package.id)
-            host.packages.add(package)
         else:
             if pkg.get('name', '').lower() != 'gpg-pubkey':
                 info_message(text=f'No package returned for {pkg}')
         pbar_update.send(sender=None, index=i + 1)
 
-    for package in host.packages.all():
-        if package.id not in package_ids:
-            host.packages.remove(package)
+    host.packages.set(package_ids)
 
 
 def process_repo_json(repo, arch):
@@ -522,12 +556,9 @@ def process_modules_json(modules_json, host):
         mod = process_module_json(module)
         if mod:
             module_ids.append(mod.id)
-            host.modules.add(mod)
         pbar_update.send(sender=None, index=i + 1)
 
-    for mod in host.modules.all():
-        if mod.id not in module_ids:
-            host.modules.remove(mod)
+    host.modules.set(module_ids)
 
 
 def process_update_json(host, update, security):
@@ -543,26 +574,30 @@ def process_update_json(host, update, security):
     return process_update(host, name, p_epoch, p_version, p_release, arch, repo_id, security)
 
 
-def process_updates_json(sec_updates_json, bug_updates_json, host):
+def process_updates_json(sec_updates_json, bug_updates_json, host, phased_deferred_updates_json=None):
     """ Processes updates from JSON data (protocol 2)
     """
-    # Clear existing updates
-    for host_update in host.updates.all():
-        host.updates.remove(host_update)
+    local_sec_count = len(sec_updates_json or [])
+    local_bug_count = len(bug_updates_json or [])
+    local_phased_count = len(phased_deferred_updates_json or [])
+    set_local_update_counts(host, local_sec_count, local_bug_count, local_phased_count)
 
     # Merge updates, preferring security over bugfix
     sec_keys = {(u['name'], u['arch']) for u in sec_updates_json}
     bug_updates_filtered = [u for u in bug_updates_json if (u['name'], u['arch']) not in sec_keys]
 
     all_updates = [(u, True) for u in sec_updates_json] + [(u, False) for u in bug_updates_filtered]
+    update_ids = []
 
     if all_updates:
         pbar_start.send(sender=None, ptext=f'{host} Updates', plen=len(all_updates))
         for i, (update, security) in enumerate(all_updates):
             update_obj = process_update_json(host, update, security)
             if update_obj:
-                host.updates.add(update_obj)
+                update_ids.append(update_obj.id)
             pbar_update.send(sender=None, index=i + 1)
+
+    host.updates.set(update_ids)
 
 
 def get_arch(arch):

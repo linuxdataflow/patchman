@@ -58,7 +58,7 @@ def process_report(self, report_id):
             else:
                 try:
                     cache.set(report_host_lock_key, report.id, lock_expire)
-                    report.process()
+                    report.process(find_updates=False)
                 finally:
                     cache.delete(report_host_lock_key)
         finally:
@@ -85,3 +85,22 @@ def remove_reports_with_no_hosts():
             text = f'Deleting report {report.id} for Host `{report.host}` as the host no longer exists'
             info_message(text=text)
             report.delete()
+
+
+@shared_task(priority=2)
+def clean_host_reports(host_id):
+    """Task to prune old reports for a single host."""
+    host = Host.objects.get(id=host_id)
+    host.clean_reports()
+
+
+@shared_task(priority=2)
+def clean_reports(host_id=None):
+    """Task to prune old reports for one host or all hosts."""
+    if host_id:
+        clean_host_reports.delay(host_id)
+        return
+
+    for host in Host.objects.all().iterator():
+        clean_host_reports.delay(host.id)
+    remove_reports_with_no_hosts.delay()

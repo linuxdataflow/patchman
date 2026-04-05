@@ -23,6 +23,10 @@ from errata.sources.distros.centos import update_centos_errata
 from errata.sources.distros.debian import update_debian_errata
 from errata.sources.distros.rocky import update_rocky_errata
 from errata.sources.distros.ubuntu import update_ubuntu_errata
+from errata.utils import (
+    enrich_errata, mark_errata_security_updates,
+    scan_package_updates_for_affected_packages,
+)
 from repos.models import Repository
 from security.tasks import update_cves, update_cwes
 from util import get_setting_of_type
@@ -92,3 +96,12 @@ def update_errata_and_cves():
     update_errata.delay()
     update_cves.delay()
     update_cwes.delay()
+
+
+@shared_task(priority=2)
+def update_errata_full(erratum_type=None, force=False, repo=None):
+    """Run errata update plus package/update enrichment pipeline."""
+    update_errata(erratum_type=erratum_type, force=force, repo=repo)
+    scan_package_updates_for_affected_packages()
+    mark_errata_security_updates()
+    enrich_errata()

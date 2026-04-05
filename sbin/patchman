@@ -30,23 +30,33 @@ from django.conf import settings  # noqa
 django_setup()
 
 from arch.utils import clean_architectures
-from errata.tasks import update_errata
+from errata.tasks import update_errata_full
 from errata.utils import (
     enrich_errata, mark_errata_security_updates,
     scan_package_updates_for_affected_packages,
 )
 from hosts.models import Host
+from hosts.tasks import (
+    check_all_hosts_rdns, check_host_rdns, find_all_host_updates,
+    find_all_host_updates_homogenous, find_host_updates,
+)
 from hosts.utils import clean_tags, find_host_updates_homogenous
 from modules.utils import clean_modules
 from packages.utils import (
     clean_packagenames, clean_packages, clean_packageupdates,
 )
 from reports.models import Report
-from reports.tasks import remove_reports_with_no_hosts
+from reports.tasks import (
+    clean_host_reports, process_report, process_reports,
+    remove_reports_with_no_hosts,
+)
 from repos.models import Repository
+from repos.tasks import refresh_repo as refresh_repo_task
+from repos.tasks import refresh_repos as refresh_repos_task
 from repos.utils import clean_repos
-from security.utils import update_cves, update_cwes
+from security.tasks import refresh_cve_data, refresh_cwe_data
 from util.logging import info_message, set_quiet_mode
+from util.tasks import clean_database
 
 
 def get_host(host=None, action='Performing action'):
@@ -114,15 +124,27 @@ def get_repos(repo=None, action='Performing action', only_enabled=False):
     return repos
 
 
-def refresh_repos(repo=None, force=False):
+def refresh_repos(repo=None, force=False, use_celery=True):
     """ Refresh metadata for all enabled repos.
         Specify a repo ID to update a single repo.
     """
+    if use_celery:
+        if repo:
+            repos = get_repos(repo, 'Queueing refresh metadata', True)
+            for r in repos:
+                info_message(text=f'Queueing refresh task for Repository {r.id} : {r}')
+                refresh_repo_task.delay(r.id, force)
+            return
+
+        info_message(text='Queueing refresh metadata task for all enabled Repos')
+        refresh_repos_task.delay(force)
+        return
+
     repos = get_repos(repo, 'Refreshing metadata', True)
-    for repo in repos:
-        text = f'Repository {repo.id} : {repo}'
+    for r in repos:
+        text = f'Repository {r.id} : {r}'
         info_message(text=text)
-        repo.refresh(force)
+        r.refresh(force)
         info_message(text='')
 
 
@@ -144,33 +166,67 @@ def list_hosts(hosts=None):
         host.show()
 
 
-def clean_reports(hoststr=None):
+def clean_reports(hoststr=None, use_celery=True):
     """ Delete old reports for all hosts, specify host for a single host.
         Reports with non existent hosts are only removed when no host is
         specified.
     """
+    if use_celery:
+        if hoststr:
+            hosts = get_hosts(hoststr, 'Queueing report cleanup')
+            for h in hosts:
+                info_message(text=f'Queueing report cleanup task for {h}')
+                clean_host_reports.delay(h.id)
+        else:
+            info_message(text='Queueing report cleanup tasks for all Hosts')
+            for h in Host.objects.all().iterator():
+                clean_host_reports.delay(h.id)
+            remove_reports_with_no_hosts.delay()
+        return
+
     hosts = get_hosts(hoststr, 'Cleaning Reports')
-    for host in hosts:
-        host.clean_reports()
+    for h in hosts:
+        h.clean_reports()
 
     if not hoststr:
         remove_reports_with_no_hosts()
 
 
-def host_updates_alt(host=None):
+def host_updates_alt(host=None, use_celery=True):
     """ Find updates for all hosts, specify host for a single host
     """
-    hosts = get_hosts(host, 'Finding updates')
-    find_host_updates_homogenous(hosts, verbose=True)
+    if use_celery:
+        if host:
+            hosts = get_hosts(host, 'Queueing updates')
+            for h in hosts:
+                info_message(text=f'Queueing update task for {h}')
+                find_host_updates.delay(h.id)
+        else:
+            info_message(text='Queueing homogenous host updates task for all Hosts')
+            find_all_host_updates_homogenous.delay()
+    else:
+        hosts = get_hosts(host, 'Finding updates')
+        find_host_updates_homogenous(hosts, verbose=True)
 
 
-def host_updates(host=None):
+def host_updates(host=None, use_celery=True):
     """ Find updates for all hosts, specify host for a single host
     """
+    if use_celery:
+        if host:
+            hosts = get_hosts(host, 'Queueing updates')
+            for h in hosts:
+                info_message(text=f'Queueing update task for {h}')
+                find_host_updates.delay(h.id)
+        else:
+            info_message(text='Queueing host updates task for all Hosts')
+            find_all_host_updates.delay()
+        return
+
     hosts = get_hosts(host, 'Finding updates')
-    for host in hosts:
-        info_message(text=str(host))
-        host.find_updates()
+    for h in hosts:
+        info_message(text=str(h))
+        h.find_updates()
         info_message(text='')
 
 
@@ -278,16 +334,27 @@ def toggle_host_check_dns(hosts=None, check_dns=True):
             host.save()
 
 
-def dns_checks(host=None):
+def dns_checks(host=None, use_celery=True):
     """ Check all hosts for reverse DNS mismatches, specify host for a single
         host
     """
+    if use_celery:
+        if host:
+            hosts = get_hosts(host, 'Queueing rDNS checks')
+            for h in hosts:
+                info_message(text=f'Queueing rDNS check task for {h}')
+                check_host_rdns.delay(h.id)
+        else:
+            info_message(text='Queueing rDNS checks for all Hosts')
+            check_all_hosts_rdns.delay()
+        return
+
     hosts = get_hosts(host, 'Checking rDNS')
     for host in hosts:
         host.check_rdns()
 
 
-def process_reports(host=None, force=False):
+def process_reports_cli(host=None, force=False, use_celery=True):
     """ Process all pending reports, specify host to process only a single host
         The --force option forces even processed reports to be reprocessed
         No reports are skipped in case some reports contain repo information
@@ -307,13 +374,30 @@ def process_reports(host=None, force=False):
 
     info_message(text=text)
 
+    if use_celery:
+        if host:
+            queued = 0
+            for report in reports.iterator():
+                process_report.delay(report.id)
+                queued += 1
+            info_message(text=f'Queued {queued} report processing task(s)')
+        else:
+            process_reports.delay()
+            info_message(text='Queued report processing task for all pending reports')
+        return
+
     for report in reports.iterator():
         report.process(find_updates=False)
 
 
-def dbcheck(remove_duplicates=False):
+def dbcheck(remove_duplicates=False, use_celery=True):
     """ Runs all clean_* functions to check database consistency
     """
+    if use_celery:
+        info_message(text='Queueing database cleanup task')
+        clean_database.delay(remove_duplicate_packages=remove_duplicates)
+        return
+
     clean_packageupdates()
     clean_packages(remove_duplicates)
     clean_packagenames()
@@ -331,6 +415,9 @@ def collect_args():
     parser.add_argument(
         '-f', '--force', action='store_true',
         help='Ignore stored checksums and force-refresh all Mirrors')
+    parser.add_argument(
+        '--inline', action='store_true',
+        help='Run selected operations inline instead of queueing Celery tasks (affects -u, -A, -p)')
     parser.add_argument(
         '-q', '--quiet', action='store_true',
         help='Quiet mode (e.g. for cronjobs)')
@@ -458,41 +545,47 @@ def process_args(args):
         diff_hosts(args.diff)
         return False
     if args.clean_reports:
-        clean_reports(args.host)
+        clean_reports(args.host, use_celery=not args.inline)
         showhelp = False
     if args.process_reports:
-        process_reports(args.host, args.force)
+        process_reports_cli(args.host, args.force, use_celery=not args.inline)
         showhelp = False
     if args.dbcheck:
-        dbcheck(args.remove_duplicates)
+        dbcheck(args.remove_duplicates, use_celery=not args.inline)
         showhelp = False
     if args.refresh_repos:
-        refresh_repos(args.repo, args.force)
+        refresh_repos(args.repo, args.force, use_celery=not args.inline)
         showhelp = False
         recheck = True
     if args.host_updates:
-        host_updates(args.host)
+        host_updates(args.host, use_celery=not args.inline)
         showhelp = False
         recheck = True
     if args.host_updates_alt:
-        host_updates_alt(args.host)
+        host_updates_alt(args.host, use_celery=not args.inline)
         showhelp = False
         recheck = True
     if args.dns_checks:
-        dns_checks(args.host)
+        dns_checks(args.host, use_celery=not args.inline)
         showhelp = False
     if args.update_errata:
-        update_errata(args.erratum_type, args.force, args.repo)
-        scan_package_updates_for_affected_packages()
-        mark_errata_security_updates()
-        enrich_errata()
+        if args.inline:
+            update_errata_full(args.erratum_type, args.force, args.repo)
+        else:
+            update_errata_full.delay(args.erratum_type, args.force, args.repo)
+            info_message(text='Queued full errata update task')
         showhelp = False
     if args.update_cves:
-        update_cves(args.cve, args.fetch_nist_data)
-        update_cwes(args.cve)
+        if args.inline:
+            refresh_cve_data(args.cve, args.fetch_nist_data)
+            refresh_cwe_data(args.cve)
+        else:
+            refresh_cve_data.delay(args.cve, args.fetch_nist_data)
+            refresh_cwe_data.delay(args.cve)
+            info_message(text='Queued CVE and CWE refresh tasks')
         showhelp = False
     if args.dbcheck and recheck:
-        dbcheck(args.remove_duplicates)
+        dbcheck(args.remove_duplicates, use_celery=not args.inline)
     return showhelp
 
 

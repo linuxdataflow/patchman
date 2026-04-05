@@ -18,6 +18,8 @@ from celery import shared_task
 from django.core.cache import cache
 
 from security.models import CVE, CWE
+from security.utils import update_cves as refresh_cves_sync
+from security.utils import update_cwes as refresh_cwes_sync
 from util.logging import warning_message
 
 
@@ -93,3 +95,15 @@ def update_cwes():
             cache.delete(lock_key)
     else:
         warning_message('Already updating CWEs, skipping task.')
+
+
+@shared_task(priority=2)
+def refresh_cve_data(cve_id=None, fetch_nist_data=False):
+    """Refresh CVE data from upstream sources with optional NIST fetch."""
+    refresh_cves_sync(cve_id=cve_id, fetch_nist_data=fetch_nist_data)
+
+
+@shared_task(priority=2)
+def refresh_cwe_data(cve_id=None):
+    """Refresh CWE data from upstream sources, optionally scoped by CVE."""
+    refresh_cwes_sync(cve_id=cve_id)

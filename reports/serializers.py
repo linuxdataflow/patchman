@@ -84,6 +84,7 @@ class ReportUploadSerializer(serializers.Serializer):
     modules = ModuleSerializer(many=True, required=False, default=list)
     sec_updates = UpdateSerializer(many=True, required=False, default=list)
     bug_updates = UpdateSerializer(many=True, required=False, default=list)
+    phased_deferred_updates = UpdateSerializer(many=True, required=False, default=list)
 
     def validate_protocol(self, value):
         if value != 2:

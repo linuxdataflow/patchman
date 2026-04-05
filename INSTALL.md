@@ -378,6 +378,10 @@ database maintenance, check for upstream updates, and find updates for clients.
 Alternatively, run celery as outlined below for finer granularity over the
 timing of these tasks and for increased concurrency.
 
+By default, `patchman -a` queues jobs to Celery workers. If Celery is not
+running, use `patchman --inline -a` to execute the same tasks synchronously in
+the CLI process.
+
 ```
 patchman -a
 ```

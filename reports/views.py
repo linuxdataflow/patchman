@@ -22,6 +22,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q
+from django.db import transaction
 from django.db.utils import OperationalError
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -45,6 +46,7 @@ from reports.tables import (
 from reports.tasks import process_report
 from util import sanitize_filter_params
 from util.filterspecs import Filter, FilterBar
+from util.logging import info_message
 
 
 def _get_filtered_reports(filter_params):
@@ -83,8 +85,8 @@ def upload(request):
 
         report = Report.objects.create()
         report.parse(data, meta)
-
-        process_report.delay(report.id)
+        info_message(text=f'Queueing report {report.id} for processing from upload endpoint')
+        transaction.on_commit(lambda: process_report.delay(report.id))
 
         if 'report' in data and data['report'] == 'true':
             packages = []
@@ -187,7 +189,8 @@ def report_process(request, report_id):
     report = get_object_or_404(Report, id=report_id)
     report.processed = False
     report.save()
-    process_report.delay(report.id)
+    info_message(text=f'Queueing report {report.id} for processing from report_process view')
+    transaction.on_commit(lambda: process_report.delay(report.id))
     text = f'Report {report} is being processed'
     messages.info(request, text)
     return redirect(report.get_absolute_url())
@@ -246,7 +249,8 @@ def report_bulk_action(request):
         for report in reports:
             report.processed = False
             report.save()
-            process_report.delay(report.id)
+            info_message(text=f'Queueing report {report.id} for processing from bulk action')
+            transaction.on_commit(lambda rid=report.id: process_report.delay(rid))
         messages.success(request, f'Queued {count} {name} for processing')
     elif action == 'delete':
         reports.delete()
@@ -342,11 +346,13 @@ class ReportViewSet(viewsets.ViewSet):
             modules=json.dumps(data.get('modules', [])),
             sec_updates=json.dumps(data.get('sec_updates', [])),
             bug_updates=json.dumps(data.get('bug_updates', [])),
+            phased_deferred_updates=json.dumps(data.get('phased_deferred_updates', [])),
             reboot=reboot,
         )
 
         # Queue for async processing
-        process_report.delay(report.id)
+        info_message(text=f'Queueing report {report.id} for processing from API upload')
+        transaction.on_commit(lambda: process_report.delay(report.id))
 
         return Response(
             {

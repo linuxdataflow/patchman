@@ -15,6 +15,7 @@
 # along with Patchman. If not, see <http://www.gnu.org/licenses/>
 
 import json
+from unittest.mock import patch
 
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -25,7 +26,8 @@ from hosts.models import Host
 from operatingsystems.models import OSRelease, OSVariant
 from reports.models import Report
 from reports.tasks import (
-    process_report, process_reports, remove_reports_with_no_hosts,
+    clean_host_reports, clean_reports, process_report, process_reports,
+    remove_reports_with_no_hosts,
 )
 
 
@@ -242,6 +244,63 @@ class RemoveReportsWithNoHostsTaskTests(TestCase):
 
         # Report should still exist
         self.assertEqual(Report.objects.count(), 1)
+
+
+@override_settings(
+    CELERY_TASK_ALWAYS_EAGER=True,
+    CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
+)
+class CleanReportsTaskTests(TestCase):
+    """Tests for clean_reports and clean_host_reports Celery tasks."""
+
+    def setUp(self):
+        self.arch = MachineArchitecture.objects.create(name='x86_64')
+        self.osrelease = OSRelease.objects.create(name='Ubuntu 22.04')
+        self.osvariant = OSVariant.objects.create(
+            name='Ubuntu 22.04.3 LTS x86_64',
+            osrelease=self.osrelease,
+            arch=self.arch,
+        )
+        self.domain = Domain.objects.create(name='example.com')
+
+    def _create_host(self, hostname, ip):
+        return Host.objects.create(
+            hostname=hostname,
+            ipaddress=ip,
+            arch=self.arch,
+            osvariant=self.osvariant,
+            domain=self.domain,
+            lastreport=timezone.now(),
+        )
+
+    @patch('reports.tasks.remove_reports_with_no_hosts')
+    @patch('reports.tasks.clean_host_reports')
+    def test_clean_reports_queues_all_hosts(self, mock_clean_host_reports, mock_remove_reports):
+        host1 = self._create_host('clean1.example.com', '192.168.1.210')
+        host2 = self._create_host('clean2.example.com', '192.168.1.211')
+
+        clean_reports()
+
+        mock_clean_host_reports.delay.assert_any_call(host1.id)
+        mock_clean_host_reports.delay.assert_any_call(host2.id)
+        self.assertEqual(mock_clean_host_reports.delay.call_count, 2)
+        mock_remove_reports.delay.assert_called_once_with()
+
+    @patch('reports.tasks.clean_host_reports')
+    def test_clean_reports_single_host_queues_single_task(self, mock_clean_host_reports):
+        host = self._create_host('clean-single.example.com', '192.168.1.212')
+
+        clean_reports(host_id=host.id)
+
+        mock_clean_host_reports.delay.assert_called_once_with(host.id)
+
+    def test_clean_host_reports_calls_model_cleanup(self):
+        host = self._create_host('clean-model.example.com', '192.168.1.213')
+
+        with patch.object(Host, 'clean_reports') as mock_clean_reports:
+            clean_host_reports(host.id)
+
+        mock_clean_reports.assert_called_once()
 
     def test_keeps_unprocessed_reports(self):
         """Test task keeps unprocessed reports even if host doesn't exist."""

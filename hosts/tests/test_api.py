@@ -14,6 +14,8 @@
 # You should have received a copy of the GNU General Public License
 # along with Patchman. If not, see <http://www.gnu.org/licenses/>
 
+from datetime import timedelta
+
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -86,14 +88,84 @@ class HostAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 0)
 
+    def test_search_hosts_by_partial_hostname(self):
+        """Test searching hosts with partial hostname matches."""
+        Host.objects.create(
+            hostname='web-01.example.com',
+            ipaddress='192.168.1.101',
+            osvariant=self.os_variant,
+            kernel='5.15.0-91-generic',
+            arch=self.arch,
+            domain=self.domain,
+            lastreport=timezone.now(),
+        )
+
+        response = self.client.get('/api/host/', {'search': 'web-01'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(response.data['results'][0]['hostname'], 'web-01.example.com')
+
+    def test_order_hosts_by_lastreport_descending(self):
+        """Test ordering hosts by last report descending."""
+        older_host = Host.objects.create(
+            hostname='older.example.com',
+            ipaddress='192.168.1.102',
+            osvariant=self.os_variant,
+            kernel='5.15.0-91-generic',
+            arch=self.arch,
+            domain=self.domain,
+            lastreport=timezone.now() - timedelta(days=1),
+        )
+
+        response = self.client.get('/api/host/', {'ordering': '-lastreport'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['results'][0]['hostname'], self.host.hostname)
+        self.assertEqual(response.data['results'][1]['hostname'], older_host.hostname)
+
+    def test_override_page_size(self):
+        """Test host API page_size override for server-side pagination."""
+        Host.objects.create(
+            hostname='page-01.example.com',
+            ipaddress='192.168.1.103',
+            osvariant=self.os_variant,
+            kernel='5.15.0-91-generic',
+            arch=self.arch,
+            domain=self.domain,
+            lastreport=timezone.now(),
+        )
+        Host.objects.create(
+            hostname='page-02.example.com',
+            ipaddress='192.168.1.104',
+            osvariant=self.os_variant,
+            kernel='5.15.0-91-generic',
+            arch=self.arch,
+            domain=self.domain,
+            lastreport=timezone.now(),
+        )
+
+        response = self.client.get('/api/host/', {'page_size': 2})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 2)
+        self.assertEqual(response.data['count'], 3)
+
     def test_host_update_counts(self):
         """Test that bugfix and security update counts are returned."""
         response = self.client.get(f'/api/host/{self.host.id}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('bugfix_update_count', response.data)
         self.assertIn('security_update_count', response.data)
+        self.assertIn('local_bugfix_update_count', response.data)
+        self.assertIn('local_security_update_count', response.data)
+        self.assertIn('local_phased_deferred_count', response.data)
+        self.assertIn('calculated_bugfix_update_count', response.data)
+        self.assertIn('calculated_security_update_count', response.data)
         self.assertEqual(response.data['bugfix_update_count'], 0)
         self.assertEqual(response.data['security_update_count'], 0)
+        self.assertEqual(response.data['local_bugfix_update_count'], 0)
+        self.assertEqual(response.data['local_security_update_count'], 0)
+        self.assertEqual(response.data['local_phased_deferred_count'], 0)
+        self.assertEqual(response.data['calculated_bugfix_update_count'], 0)
+        self.assertEqual(response.data['calculated_security_update_count'], 0)
 
     def test_host_update_counts_with_updates(self):
         """Test update counts with actual security and bugfix updates."""
@@ -130,6 +202,8 @@ class HostAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['security_update_count'], 1)
         self.assertEqual(response.data['bugfix_update_count'], 1)
+        self.assertEqual(response.data['calculated_security_update_count'], 1)
+        self.assertEqual(response.data['calculated_bugfix_update_count'], 1)
 
     def test_create_host_via_api(self):
         """Test creating a host via API."""

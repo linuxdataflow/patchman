@@ -19,6 +19,7 @@ from django.test import TestCase, override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_api_key.models import APIKey
+from unittest.mock import patch
 
 from reports.models import Report
 
@@ -132,7 +133,15 @@ class ReportAPITests(APITestCase):
                     'repo': 'ubuntu-security'
                 }
             ],
-            'bug_updates': []
+            'bug_updates': [],
+            'phased_deferred_updates': [
+                {
+                    'name': 'linux-generic',
+                    'version': '6.8.0-57.59',
+                    'arch': 'amd64',
+                    'repo': 'ubuntu-updates'
+                }
+            ]
         }
         response = self.client.post(self.url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
@@ -141,6 +150,7 @@ class ReportAPITests(APITestCase):
         self.assertEqual(report.host, 'server1.example.com')
         self.assertEqual(report.tags, 'web,production')
         self.assertEqual(report.reboot, 'True')
+        self.assertIn('linux-generic', report.phased_deferred_updates)
 
     def test_upload_missing_required_field(self):
         """Test that missing required fields return 400."""
@@ -215,6 +225,32 @@ class ReportAPITests(APITestCase):
         }
         response = self.client.post(self.url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch('reports.views.info_message')
+    @patch('reports.views.process_report')
+    @patch('reports.views.transaction.on_commit')
+    def test_upload_uses_on_commit_for_queue_dispatch(self, mock_on_commit, mock_process_report, mock_info):
+        data = {
+            'protocol': 2,
+            'hostname': 'queued.example.com',
+            'arch': 'x86_64',
+            'kernel': '5.15.0',
+            'os': 'Ubuntu 22.04',
+        }
+
+        def _run_callback(callback):
+            callback()
+
+        mock_on_commit.side_effect = _run_callback
+
+        response = self.client.post(self.url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        mock_on_commit.assert_called_once()
+        mock_process_report.delay.assert_called_once()
+        self.assertTrue(
+            any('Queueing report' in call.kwargs.get('text', '') for call in mock_info.call_args_list)
+        )
 
 
 class ReportSerializerTests(TestCase):

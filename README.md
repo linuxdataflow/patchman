@@ -54,15 +54,20 @@ maintenance tasks, e.g. processing the reports sent from hosts, downloading
 repository update information from the web. Run `patchman -h` for a rundown of
 the usage:
 
+By default, job-oriented actions are queued to Celery workers (`-r`, `-u`,
+`-A`, `-p`, `-c`, `-d`, `-n`, `-e`, `-v`). Use `--inline` to force synchronous
+execution in the CLI process (legacy behavior).
+
 ```shell
 $ sbin/patchman -h
-usage: patchman [-h] [-f] [-q] [-r] [-R REPO] [-lr] [-lh] [-dh] [-u] [-A] [-shro | -uhro] [-sdns | -udns] [-H HOST] [-p] [-c] [-d] [-rd] [-n] [-a] [-D hostA hostB] [-e] [-E ERRATUM_TYPE] [-v] [--cve CVE] [--fetch-nist-data]
+usage: patchman [-h] [-f] [--inline] [-q] [-r] [-R REPO] [-lr] [-lh] [-dh] [-u] [-A] [-shro | -uhro] [-sdns | -udns] [-H HOST] [-p] [-c] [-d] [-rd] [-n] [-a] [-D hostA hostB] [-e] [-E ERRATUM_TYPE] [-v] [--cve CVE] [--fetch-nist-data]
 
 Patchman CLI tool
 
 options:
   -h, --help            show this help message and exit
   -f, --force           Ignore stored checksums and force-refresh all Mirrors
+  --inline              Run selected operations inline instead of queueing Celery tasks (affects -r, -u, -A, -p, -c, -d, -n, -e, -v)
   -q, --quiet           Quiet mode (e.g. for cronjobs)
   -r, --refresh-repos   Refresh Repositories
   -R REPO, --repo REPO  Only perform action on a specific Repository (repo_id)
@@ -98,6 +103,66 @@ options:
   --cve CVE             Only update the specified CVE (e.g. CVE-2024-1234)
   --fetch-nist-data, -nd
                         Fetch NIST CVE data in addition to MITRE data (rate-limited to 1 API call every 6 seconds)
+```
+
+### Operations API
+
+Patchman also provides an asynchronous endpoint for triggering selected
+maintenance operations through the REST API.
+
+- Endpoint: `POST /api/operations/`
+- Behavior: validates the request, queues one or more Celery tasks, returns
+  `202 Accepted` with queued task IDs.
+
+Supported operations and their parameters:
+
+| Operation | Parameters | Description |
+|-----------|-----------|-------------|
+| `refresh_repos` | `repo_id` (int, optional), `force` (bool, optional) | Refresh all repos, or a specific repo if `repo_id` provided |
+| `host_updates` | `host` (string, optional) | Find updates for a specific host or all hosts if omitted |
+| `host_updates_alt` | None | Alternative host updates algorithm (faster for homogeneous hosts) |
+| `process_reports` | `host` (string, optional) | Process reports for a specific host or all reports if omitted |
+| `dbcheck` | `remove_duplicates` (bool, optional) | Database sanity checks, optionally remove duplicate packages |
+| `update_errata` | `erratum_type` (string, optional), `force` (bool, optional), `repo_id` (int, optional) | Update errata for specific type or all types. Types: `yum`, `rocky`, `alma`, `arch`, `ubuntu`, `debian`, `centos` |
+| `update_cves` | `cve_id` (string, optional) | Update CVE from CVE.org, or a specific CVE if `cve_id` provided |
+
+Authentication behavior for this endpoint:
+
+- No authentication is required. The operations endpoint accepts unauthenticated
+  requests regardless of `REQUIRE_API_KEY`.
+
+Example request (update errata):
+
+```json
+{
+  "operation": "update_errata",
+  "params": {
+    "erratum_type": "ubuntu",
+    "force": false
+  }
+}
+```
+
+Example request (process reports for specific host):
+
+```json
+{
+  "operation": "process_reports",
+  "params": {
+    "host": "server1.example.com"
+  }
+}
+```
+
+Example response (`202 Accepted`):
+
+```json
+{
+  "status": "accepted",
+  "operation": "update_errata",
+  "task_ids": ["b8d4f4c7-2ec8-4f92-a30f-40c0c2cf17c1"],
+  "message": "Operation queued for processing"
+}
 ```
 
 ### Client dependencies

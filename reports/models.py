@@ -41,6 +41,7 @@ class Report(models.Model):
     packages = models.TextField(null=True, blank=True)
     sec_updates = models.TextField(null=True, blank=True)
     bug_updates = models.TextField(null=True, blank=True)
+    phased_deferred_updates = models.TextField(null=True, blank=True)
     repos = models.TextField(null=True, blank=True)
     modules = models.TextField(null=True, blank=True)
     reboot = models.TextField(null=True, blank=True)
@@ -107,6 +108,20 @@ class Report(models.Model):
         return []
 
     @property
+    def phased_deferred_updates_parsed(self):
+        """Parse phased deferred updates JSON for Protocol 2 reports."""
+        if self.protocol == '2' and self.phased_deferred_updates:
+            try:
+                parsed = json.loads(self.phased_deferred_updates)
+                if isinstance(parsed, list):
+                    return parsed
+                if isinstance(parsed, dict) and isinstance(parsed.get('updates'), list):
+                    return parsed['updates']
+            except json.JSONDecodeError:
+                return []
+        return []
+
+    @property
     def has_packages(self):
         """Check if report has packages data."""
         if self.protocol == '2':
@@ -141,6 +156,13 @@ class Report(models.Model):
             return bool(self.bug_updates_parsed)
         return bool(self.bug_updates and self.bug_updates.strip())
 
+    @property
+    def has_phased_deferred_updates(self):
+        """Check if report has phased deferred updates."""
+        if self.protocol == '2':
+            return bool(self.phased_deferred_updates_parsed)
+        return bool(self.phased_deferred_updates and self.phased_deferred_updates.strip())
+
     def parse(self, data, meta):
         """ Parse a report and save the object
         """
@@ -164,6 +186,7 @@ class Report(models.Model):
                  'tags',
                  'sec_updates',
                  'bug_updates',
+                 'phased_deferred_updates',
                  'repos',
                  'modules',
                  'reboot']
@@ -218,11 +241,17 @@ class Report(models.Model):
             modules_json = json.loads(self.modules) if self.modules else []
             sec_updates_json = json.loads(self.sec_updates) if self.sec_updates else []
             bug_updates_json = json.loads(self.bug_updates) if self.bug_updates else []
+            phased_deferred_updates_json = self.phased_deferred_updates_parsed
 
             process_repos_json(repos_json, host, self.arch)
             process_modules_json(modules_json, host)
             process_packages_json(packages_json, host)
-            process_updates_json(sec_updates_json, bug_updates_json, host)
+            process_updates_json(
+                sec_updates_json,
+                bug_updates_json,
+                host,
+                phased_deferred_updates_json,
+            )
         else:
             # Protocol 1: Text data
             from reports.utils import (
