@@ -544,7 +544,9 @@ get_apt_updates() {
     if ${verbose} ; then
         echo 'Finding apt updates...'
     fi
-    # Collect regular upgradable packages (phased packages excluded by default).
+    # Collect regular upgradable packages with phased updates explicitly excluded.
+    # This avoids host-level apt config (Always-Include-Phased-Updates=true)
+    # masking phased-deferred packages.
     # Use process substitution to keep the loop in the current shell so tmpfile
     # writes are visible outside the loop.
     local _tmpfile_reg_names
@@ -564,10 +566,10 @@ get_apt_updates() {
         else
             echo "${pkg}.${arch} ${version}" >> "${tmpfile_bug}"
         fi
-    done < <(apt list --upgradable 2>/dev/null | grep -v '^Listing' | grep -v '^$')
+    done < <(apt -o APT::Get::Always-Include-Phased-Updates=false list --upgradable 2>/dev/null | grep -v '^Listing' | grep -v '^$')
 
-    # Detect phased updates: packages present when Always-Include-Phased-Updates
-    # is forced but absent from the default listing above.
+    # Detect phased updates: packages present when phased updates are explicitly
+    # included but absent from the explicit phased-excluded listing above.
     while IFS= read -r line ; do
         if [ -z "${line}" ] ; then
             continue
