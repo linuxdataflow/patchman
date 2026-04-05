@@ -41,3 +41,17 @@ def find_all_host_updates_homogenous():
     """ Task to find updates for all hosts where hosts are expected to be homogenous
     """
     find_host_updates_homogenous(Host.objects.all())
+
+
+@shared_task(priority=2)
+def check_host_rdns(host_id):
+    """Task to run reverse-DNS check for a single host."""
+    host = Host.objects.get(id=host_id)
+    host.check_rdns()
+
+
+@shared_task(priority=2)
+def check_all_hosts_rdns():
+    """Task to run reverse-DNS checks for all hosts."""
+    for host in Host.objects.all().iterator():
+        check_host_rdns.delay(host.id)

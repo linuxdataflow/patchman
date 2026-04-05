@@ -54,15 +54,20 @@ maintenance tasks, e.g. processing the reports sent from hosts, downloading
 repository update information from the web. Run `patchman -h` for a rundown of
 the usage:
 
+By default, job-oriented actions are queued to Celery workers (`-r`, `-u`,
+`-A`, `-p`, `-c`, `-d`, `-n`, `-e`, `-v`). Use `--inline` to force synchronous
+execution in the CLI process (legacy behavior).
+
 ```shell
 $ sbin/patchman -h
-usage: patchman [-h] [-f] [-q] [-r] [-R REPO] [-lr] [-lh] [-dh] [-u] [-A] [-shro | -uhro] [-sdns | -udns] [-H HOST] [-p] [-c] [-d] [-rd] [-n] [-a] [-D hostA hostB] [-e] [-E ERRATUM_TYPE] [-v] [--cve CVE] [--fetch-nist-data]
+usage: patchman [-h] [-f] [--inline] [-q] [-r] [-R REPO] [-lr] [-lh] [-dh] [-u] [-A] [-shro | -uhro] [-sdns | -udns] [-H HOST] [-p] [-c] [-d] [-rd] [-n] [-a] [-D hostA hostB] [-e] [-E ERRATUM_TYPE] [-v] [--cve CVE] [--fetch-nist-data]
 
 Patchman CLI tool
 
 options:
   -h, --help            show this help message and exit
   -f, --force           Ignore stored checksums and force-refresh all Mirrors
+  --inline              Run selected operations inline instead of queueing Celery tasks (affects -r, -u, -A, -p, -c, -d, -n, -e, -v)
   -q, --quiet           Quiet mode (e.g. for cronjobs)
   -r, --refresh-repos   Refresh Repositories
   -R REPO, --repo REPO  Only perform action on a specific Repository (repo_id)

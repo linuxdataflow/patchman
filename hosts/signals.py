@@ -30,11 +30,21 @@ def update_host_packages_count(sender, instance, action, **kwargs):
 
 @receiver(m2m_changed, sender=Host.updates.through)
 def update_host_updates_count(sender, instance, action, **kwargs):
-    """Update sec_updates_count and bug_updates_count when Host.updates M2M changes."""
+    """Update calculated and legacy update counters when Host.updates M2M changes."""
     if action in ('post_add', 'post_remove', 'post_clear'):
-        instance.sec_updates_count = instance.updates.filter(security=True).count()
-        instance.bug_updates_count = instance.updates.filter(security=False).count()
-        instance.save(update_fields=['sec_updates_count', 'bug_updates_count'])
+        calc_sec_count = instance.updates.filter(security=True).count()
+        calc_bug_count = instance.updates.filter(security=False).count()
+        instance.calc_sec_updates_count = calc_sec_count
+        instance.calc_bug_updates_count = calc_bug_count
+        # Legacy fields are kept for compatibility and mirror calculated values.
+        instance.sec_updates_count = calc_sec_count
+        instance.bug_updates_count = calc_bug_count
+        instance.save(update_fields=[
+            'calc_sec_updates_count',
+            'calc_bug_updates_count',
+            'sec_updates_count',
+            'bug_updates_count',
+        ])
 
 
 @receiver(m2m_changed, sender=Host.errata.through)

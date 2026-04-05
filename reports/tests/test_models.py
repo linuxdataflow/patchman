@@ -187,6 +187,21 @@ class ReportParsedPropertiesTests(TestCase):
         )
         self.assertEqual(report.bug_updates_parsed, updates)
 
+    def test_phased_deferred_updates_parsed_protocol2(self):
+        """Test phased_deferred_updates_parsed returns parsed JSON list."""
+        updates = [
+            {'name': 'linux-generic', 'version': '6.8.0-57.59', 'arch': 'amd64', 'repo': 'ubuntu-updates'}
+        ]
+        report = Report.objects.create(
+            host='testhost.example.com',
+            kernel='5.15.0',
+            arch='x86_64',
+            os='Ubuntu 22.04',
+            protocol='2',
+            phased_deferred_updates=json.dumps(updates),
+        )
+        self.assertEqual(report.phased_deferred_updates_parsed, updates)
+
 
 @override_settings(
     CELERY_TASK_ALWAYS_EAGER=True,
@@ -307,6 +322,19 @@ class ReportHasPropertiesTests(TestCase):
             bug_updates=json.dumps(updates),
         )
         self.assertTrue(report.has_bug_updates)
+
+    def test_has_phased_deferred_updates_protocol2(self):
+        """Test has_phased_deferred_updates property for protocol 2."""
+        updates = [{'name': 'linux-generic', 'version': '6.8.0-57.59'}]
+        report = Report.objects.create(
+            host='testhost.example.com',
+            kernel='5.15.0',
+            arch='x86_64',
+            os='Ubuntu 22.04',
+            protocol='2',
+            phased_deferred_updates=json.dumps(updates),
+        )
+        self.assertTrue(report.has_phased_deferred_updates)
 
 
 @override_settings(

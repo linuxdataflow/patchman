@@ -61,6 +61,11 @@ class Host(models.Model):
     updated_at = models.DateTimeField(default=timezone.now)
     errata = models.ManyToManyField(Erratum, blank=True)
     # Cached count fields for query optimization
+    local_sec_updates_count = models.PositiveIntegerField(default=0, db_index=True)
+    local_bug_updates_count = models.PositiveIntegerField(default=0, db_index=True)
+    local_phased_deferred_count = models.PositiveIntegerField(default=0, db_index=True)
+    calc_sec_updates_count = models.PositiveIntegerField(default=0, db_index=True)
+    calc_bug_updates_count = models.PositiveIntegerField(default=0, db_index=True)
     sec_updates_count = models.PositiveIntegerField(default=0, db_index=True)
     bug_updates_count = models.PositiveIntegerField(default=0, db_index=True)
     packages_count = models.PositiveIntegerField(default=0, db_index=True)

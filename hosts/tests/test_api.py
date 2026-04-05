@@ -154,8 +154,18 @@ class HostAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('bugfix_update_count', response.data)
         self.assertIn('security_update_count', response.data)
+        self.assertIn('local_bugfix_update_count', response.data)
+        self.assertIn('local_security_update_count', response.data)
+        self.assertIn('local_phased_deferred_count', response.data)
+        self.assertIn('calculated_bugfix_update_count', response.data)
+        self.assertIn('calculated_security_update_count', response.data)
         self.assertEqual(response.data['bugfix_update_count'], 0)
         self.assertEqual(response.data['security_update_count'], 0)
+        self.assertEqual(response.data['local_bugfix_update_count'], 0)
+        self.assertEqual(response.data['local_security_update_count'], 0)
+        self.assertEqual(response.data['local_phased_deferred_count'], 0)
+        self.assertEqual(response.data['calculated_bugfix_update_count'], 0)
+        self.assertEqual(response.data['calculated_security_update_count'], 0)
 
     def test_host_update_counts_with_updates(self):
         """Test update counts with actual security and bugfix updates."""
@@ -192,6 +202,8 @@ class HostAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['security_update_count'], 1)
         self.assertEqual(response.data['bugfix_update_count'], 1)
+        self.assertEqual(response.data['calculated_security_update_count'], 1)
+        self.assertEqual(response.data['calculated_bugfix_update_count'], 1)
 
     def test_create_host_via_api(self):
         """Test creating a host via API."""

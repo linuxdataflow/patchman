@@ -23,6 +23,11 @@ from hosts.models import Host, HostRepo
 class HostSerializer(serializers.HyperlinkedModelSerializer):
     bugfix_update_count = serializers.SerializerMethodField()
     security_update_count = serializers.SerializerMethodField()
+    local_bugfix_update_count = serializers.SerializerMethodField()
+    local_security_update_count = serializers.SerializerMethodField()
+    local_phased_deferred_count = serializers.SerializerMethodField()
+    calculated_bugfix_update_count = serializers.SerializerMethodField()
+    calculated_security_update_count = serializers.SerializerMethodField()
     tags = TagListSerializerField()
 
     class Meta:
@@ -30,13 +35,31 @@ class HostSerializer(serializers.HyperlinkedModelSerializer):
         fields = ('id', 'hostname', 'ipaddress', 'reversedns', 'check_dns',
                   'osvariant', 'kernel', 'arch', 'domain', 'lastreport', 'repos',
                   'updates', 'reboot_required', 'host_repos_only', 'tags',
-                  'updated_at', 'bugfix_update_count', 'security_update_count')
+                  'updated_at', 'bugfix_update_count', 'security_update_count',
+                  'local_bugfix_update_count', 'local_security_update_count',
+                  'local_phased_deferred_count',
+                  'calculated_bugfix_update_count', 'calculated_security_update_count')
 
     def get_bugfix_update_count(self, obj):
-        return obj.bug_updates_count
+        return obj.calc_bug_updates_count
 
     def get_security_update_count(self, obj):
-        return obj.sec_updates_count
+        return obj.calc_sec_updates_count
+
+    def get_local_bugfix_update_count(self, obj):
+        return obj.local_bug_updates_count
+
+    def get_local_security_update_count(self, obj):
+        return obj.local_sec_updates_count
+
+    def get_local_phased_deferred_count(self, obj):
+        return obj.local_phased_deferred_count
+
+    def get_calculated_bugfix_update_count(self, obj):
+        return obj.calc_bug_updates_count
+
+    def get_calculated_security_update_count(self, obj):
+        return obj.calc_sec_updates_count
 
 
 class HostRepoSerializer(serializers.HyperlinkedModelSerializer):

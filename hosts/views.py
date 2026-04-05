@@ -324,8 +324,13 @@ class HostViewSet(viewsets.ModelViewSet):
         'ipaddress': 'ipaddress',
         'lastreport': 'lastreport',
         'updated_at': 'updated_at',
-        'bugfix_update_count': 'bug_updates_count',
-        'security_update_count': 'sec_updates_count',
+        'bugfix_update_count': 'calc_bug_updates_count',
+        'security_update_count': 'calc_sec_updates_count',
+        'local_bugfix_update_count': 'local_bug_updates_count',
+        'local_security_update_count': 'local_sec_updates_count',
+        'local_phased_deferred_count': 'local_phased_deferred_count',
+        'calculated_bugfix_update_count': 'calc_bug_updates_count',
+        'calculated_security_update_count': 'calc_sec_updates_count',
         'reboot_required': 'reboot_required',
     }
     ordering = ['hostname']
