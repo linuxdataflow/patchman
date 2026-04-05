@@ -3,6 +3,35 @@
 from django.db import migrations, models
 
 
+HOST_COUNT_FIELDS = [
+    'calc_bug_updates_count',
+    'calc_sec_updates_count',
+    'local_bug_updates_count',
+    'local_phased_deferred_count',
+    'local_sec_updates_count',
+]
+
+
+def add_missing_host_count_fields(apps, schema_editor):
+    Host = apps.get_model('hosts', 'Host')
+    table_name = Host._meta.db_table
+
+    with schema_editor.connection.cursor() as cursor:
+        existing_columns = {
+            col.name for col in schema_editor.connection.introspection.get_table_description(cursor, table_name)
+        }
+
+    # Some environments may already have one or more columns due to drift or
+    # partial rollouts. Add only what is still missing.
+    for field_name in HOST_COUNT_FIELDS:
+        if field_name in existing_columns:
+            continue
+
+        field = models.PositiveIntegerField(default=0, db_index=True)
+        field.set_attributes_from_name(field_name)
+        schema_editor.add_field(Host, field)
+
+
 def backfill_local_and_calc_counts(apps, schema_editor):
     Host = apps.get_model('hosts', 'Host')
     for host in Host.objects.all():
@@ -33,30 +62,37 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='host',
-            name='calc_bug_updates_count',
-            field=models.PositiveIntegerField(db_index=True, default=0),
-        ),
-        migrations.AddField(
-            model_name='host',
-            name='calc_sec_updates_count',
-            field=models.PositiveIntegerField(db_index=True, default=0),
-        ),
-        migrations.AddField(
-            model_name='host',
-            name='local_bug_updates_count',
-            field=models.PositiveIntegerField(db_index=True, default=0),
-        ),
-        migrations.AddField(
-            model_name='host',
-            name='local_phased_deferred_count',
-            field=models.PositiveIntegerField(db_index=True, default=0),
-        ),
-        migrations.AddField(
-            model_name='host',
-            name='local_sec_updates_count',
-            field=models.PositiveIntegerField(db_index=True, default=0),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(add_missing_host_count_fields, migrations.RunPython.noop),
+            ],
+            state_operations=[
+                migrations.AddField(
+                    model_name='host',
+                    name='calc_bug_updates_count',
+                    field=models.PositiveIntegerField(db_index=True, default=0),
+                ),
+                migrations.AddField(
+                    model_name='host',
+                    name='calc_sec_updates_count',
+                    field=models.PositiveIntegerField(db_index=True, default=0),
+                ),
+                migrations.AddField(
+                    model_name='host',
+                    name='local_bug_updates_count',
+                    field=models.PositiveIntegerField(db_index=True, default=0),
+                ),
+                migrations.AddField(
+                    model_name='host',
+                    name='local_phased_deferred_count',
+                    field=models.PositiveIntegerField(db_index=True, default=0),
+                ),
+                migrations.AddField(
+                    model_name='host',
+                    name='local_sec_updates_count',
+                    field=models.PositiveIntegerField(db_index=True, default=0),
+                ),
+            ],
         ),
         migrations.RunPython(backfill_local_and_calc_counts, reverse_backfill),
     ]
