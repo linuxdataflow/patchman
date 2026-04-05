@@ -15,9 +15,11 @@
 # along with Patchman. If not, see <http://www.gnu.org/licenses/>
 
 import hashlib
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.parse import urlencode, urlparse, urlsplit, urlunsplit
 
 import requests
+import redis
+from django.conf import settings
 from django.core.cache import cache
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
@@ -38,6 +40,7 @@ from repos.models import Repository
 from repos.tasks import refresh_repo, refresh_repos
 from security.models import CVE
 from security.tasks import update_cve, update_cves
+from patchman.celery import app as celery_app
 from util.api_serializers import OperationRequestSerializer
 from util.tasks import clean_database
 
@@ -248,6 +251,51 @@ class HostInventoryViewSet(viewsets.ViewSet):
                 'next': next_url,
                 'previous': previous_url,
                 'results': results,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class CeleryMetricsViewSet(viewsets.ViewSet):
+    """Return basic Celery runtime metrics for UI status display."""
+
+    def get_permissions(self):
+        return [AllowAny()]
+
+    def list(self, request):
+        workers_count = None
+        jobs_in_progress = None
+        jobs_in_queue = None
+
+        # Worker and active-task metrics from Celery inspect.
+        try:
+            inspector = celery_app.control.inspect(timeout=1)
+            stats = inspector.stats() or {}
+            active = inspector.active() or {}
+            workers_count = len(stats.keys()) if isinstance(stats, dict) else 0
+            if isinstance(active, dict):
+                jobs_in_progress = sum(len(tasks or []) for tasks in active.values())
+            else:
+                jobs_in_progress = 0
+        except Exception:
+            pass
+
+        # Queue depth from Redis broker list length (default queue).
+        try:
+            broker_url = str(getattr(settings, 'CELERY_BROKER_URL', '') or '').strip()
+            parsed = urlparse(broker_url)
+            if parsed.scheme.startswith('redis'):
+                queue_name = getattr(settings, 'CELERY_TASK_DEFAULT_QUEUE', 'celery')
+                redis_client = redis.Redis.from_url(broker_url)
+                jobs_in_queue = int(redis_client.llen(queue_name))
+        except Exception:
+            pass
+
+        return Response(
+            {
+                'workers_count': workers_count,
+                'jobs_in_queue': jobs_in_queue,
+                'jobs_in_progress': jobs_in_progress,
             },
             status=status.HTTP_200_OK,
         )
