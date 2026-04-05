@@ -163,6 +163,37 @@ class Report(models.Model):
             return bool(self.phased_deferred_updates_parsed)
         return bool(self.phased_deferred_updates and self.phased_deferred_updates.strip())
 
+    def has_meaningful_changes(self):
+        """Check if this report recorded meaningful package changes compared to previous report.
+        
+        Preserves reports that show:
+        - Different packages than the previous report
+        - Security updates available
+        - Bug updates available
+        - Phased deferred updates
+        
+        Returns True if report should be preserved, False otherwise.
+        """
+        # Always preserve reports with updates to install
+        if self.has_sec_updates or self.has_bug_updates or self.has_phased_deferred_updates:
+            return True
+        
+        # Get the previous report for this host (if any)
+        previous_report = Report.objects.filter(
+            host=self.host,
+            created__lt=self.created
+        ).order_by('-created').first()
+        
+        if not previous_report:
+            # No previous report, preserve this one
+            return True
+        
+        # Compare packages between this report and the previous one
+        if self.packages != previous_report.packages:
+            return True
+        
+        return False
+
     def parse(self, data, meta):
         """ Parse a report and save the object
         """

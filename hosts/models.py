@@ -137,15 +137,32 @@ class Host(models.Model):
             info_message(text='Reverse DNS check disabled')
 
     def clean_reports(self):
-        """ Remove all but the last 3 reports for a host
+        """ Remove old reports for a host, but preserve those with meaningful changes.
+        
+        Always keeps the last 3 reports. Additionally preserves any older reports that:
+        - Have security updates available
+        - Have bug updates available  
+        - Have phased deferred updates
+        - Show package changes compared to previous report
         """
         from reports.models import Report
-        reports = list(Report.objects.filter(host=self).order_by('-created')[3:])
-        rlen = len(reports)
-        for report in reports:
-            report.delete()
-        if rlen > 0:
-            info_message(text=f'{self.hostname}: removed {rlen} old reports')
+        all_reports = list(Report.objects.filter(host=self).order_by('-created'))
+        
+        # Always keep the last 3 reports
+        reports_to_keep = all_reports[:3]
+        reports_to_check = all_reports[3:]
+        
+        deleted_count = 0
+        for report in reports_to_check:
+            # Preserve reports with meaningful changes
+            if report.has_meaningful_changes():
+                reports_to_keep.append(report)
+            else:
+                report.delete()
+                deleted_count += 1
+        
+        if deleted_count > 0:
+            info_message(text=f'{self.hostname}: removed {deleted_count} old reports without meaningful changes')
 
     def get_host_repo_packages(self):
         if self.host_repos_only:
