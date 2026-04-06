@@ -22,6 +22,8 @@ import redis
 from django.conf import settings
 from django.core.cache import cache
 from django.shortcuts import get_object_or_404
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import never_cache
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
@@ -428,6 +430,7 @@ class CeleryMetricsViewSet(viewsets.ViewSet):
         )
 
 
+@method_decorator(never_cache, name='dispatch')
 class HostInventorySharedViewSet(viewsets.ViewSet):
     """Persist and share host inventory view state via opaque tokens."""
 
@@ -464,9 +467,7 @@ class HostInventorySharedViewSet(viewsets.ViewSet):
     def retrieve(self, request, share_token=None):
         shared_view = self.get_object()
         serializer = HostInventorySharedViewSerializer(shared_view, context=self._serializer_context())
-        response = Response(serializer.data, status=status.HTTP_200_OK)
-        response['Cache-Control'] = 'no-store'
-        return response
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='save')
     def save_view(self, request, share_token=None):
@@ -497,9 +498,7 @@ class HostInventorySharedViewSet(viewsets.ViewSet):
             return Response({'detail': 'Invalid manage token.'}, status=status.HTTP_403_FORBIDDEN)
 
         shared_view.delete()
-        response = Response({'status': 'deleted'}, status=status.HTTP_200_OK)
-        response['Cache-Control'] = 'no-store'
-        return response
+        return Response({'status': 'deleted'}, status=status.HTTP_200_OK)
 
 
 class OperationViewSet(viewsets.ViewSet):
