@@ -239,6 +239,7 @@ class HostInventoryViewSet(viewsets.ViewSet):
             request.query_params.get('project_or_subscription', '') or ''
         ).strip().lower()
         resource_group_filter = str(request.query_params.get('resource_group', '') or '').strip().lower()
+        zone_filter = str(request.query_params.get('zone', '') or '').strip().lower()
         account_scope_filter = str(request.query_params.get('account_scope', '') or '').strip().lower()
 
         rundeck_host = str(request.query_params.get('rundeck_host', '') or '').strip()
@@ -347,6 +348,11 @@ class HostInventoryViewSet(viewsets.ViewSet):
                 item for item in merged
                 if str(item.get('resource_group_or_folder') or '').strip().lower() == resource_group_filter
             ]
+        if zone_filter:
+            merged = [
+                item for item in merged
+                if str(item.get('zone') or '').strip().lower() == zone_filter
+            ]
         if account_scope_filter:
             merged = [
                 item for item in merged
@@ -422,6 +428,7 @@ class HostInventoryViewSet(viewsets.ViewSet):
                 'region': _facet_counts('region'),
                 'project_or_subscription': _facet_counts('project_or_subscription'),
                 'resource_group_or_folder': _facet_counts('resource_group_or_folder'),
+                'zone': _facet_counts('zone'),
             }
 
         total = len(merged)
