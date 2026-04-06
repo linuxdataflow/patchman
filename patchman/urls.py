@@ -54,6 +54,7 @@ router.register(r'mirror-package', repo_views.MirrorPackageViewSet)
 router.register(r'report', report_views.ReportViewSet, basename='report')
 router.register(r'operations', util_api_views.OperationViewSet, basename='operations')
 router.register(r'host-inventory', util_api_views.HostInventoryViewSet, basename='host-inventory')
+router.register(r'host-inventory-view', util_api_views.HostInventorySharedViewSet, basename='host-inventory-view')
 router.register(r'celery-metrics', util_api_views.CeleryMetricsViewSet, basename='celery-metrics')
 
 admin.autodiscover()

@@ -12,14 +12,17 @@ HOST_COUNT_FIELDS = [
 ]
 
 
+def _get_existing_columns(connection, table_name):
+    with connection.cursor() as cursor:
+        return {
+            col.name for col in connection.introspection.get_table_description(cursor, table_name)
+        }
+
+
 def add_missing_host_count_fields(apps, schema_editor):
     Host = apps.get_model('hosts', 'Host')
     table_name = Host._meta.db_table
-
-    with schema_editor.connection.cursor() as cursor:
-        existing_columns = {
-            col.name for col in schema_editor.connection.introspection.get_table_description(cursor, table_name)
-        }
+    existing_columns = _get_existing_columns(schema_editor.connection, table_name)
 
     # Some environments may already have one or more columns due to drift or
     # partial rollouts. Add only what is still missing.
@@ -34,21 +37,31 @@ def add_missing_host_count_fields(apps, schema_editor):
 
 def backfill_local_and_calc_counts(apps, schema_editor):
     Host = apps.get_model('hosts', 'Host')
-    for host in Host.objects.all():
-        # Preserve current behavior by seeding both local and calculated values
-        # from existing legacy counters.
-        host.local_sec_updates_count = host.sec_updates_count
-        host.local_bug_updates_count = host.bug_updates_count
-        host.local_phased_deferred_count = 0
-        host.calc_sec_updates_count = host.sec_updates_count
-        host.calc_bug_updates_count = host.bug_updates_count
-        host.save(update_fields=[
-            'local_sec_updates_count',
-            'local_bug_updates_count',
-            'local_phased_deferred_count',
-            'calc_sec_updates_count',
-            'calc_bug_updates_count',
-        ])
+    table_name = Host._meta.db_table
+
+    # Ensure the physical columns exist even when schema state drifted before
+    # this migration is replayed in a fresh test database.
+    add_missing_host_count_fields(apps, schema_editor)
+
+    existing_columns = _get_existing_columns(schema_editor.connection, table_name)
+    required_columns = set(HOST_COUNT_FIELDS + ['sec_updates_count', 'bug_updates_count'])
+    if not required_columns.issubset(existing_columns):
+        return
+
+    quoted_table = schema_editor.quote_name(table_name)
+    quoted = schema_editor.quote_name
+    schema_editor.execute(
+        "UPDATE {table} SET {local_sec} = {sec}, {local_bug} = {bug}, {local_phased} = 0, {calc_sec} = {sec}, {calc_bug} = {bug}".format(
+            table=quoted_table,
+            local_sec=quoted('local_sec_updates_count'),
+            sec=quoted('sec_updates_count'),
+            local_bug=quoted('local_bug_updates_count'),
+            bug=quoted('bug_updates_count'),
+            local_phased=quoted('local_phased_deferred_count'),
+            calc_sec=quoted('calc_sec_updates_count'),
+            calc_bug=quoted('calc_bug_updates_count'),
+        )
+    )
 
 
 def reverse_backfill(apps, schema_editor):

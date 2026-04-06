@@ -170,6 +170,9 @@ local_settings = os.path.join(conf_path, 'local_settings.py')
 with open(local_settings, 'r', encoding='utf_8') as ls:
     exec(compile(ls.read(), local_settings, 'exec'))
 
+if not globals().get('SECRET_KEY'):
+    SECRET_KEY = 'patchman-dev-secret-key'
+
 INSTALLED_APPS = DEFAULT_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 if RUN_GUNICORN or (len(sys.argv) > 1 and sys.argv[1] == 'runserver'):  # noqa

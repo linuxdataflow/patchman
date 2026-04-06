@@ -14,7 +14,11 @@
 # You should have received a copy of the GNU General Public License
 # along with Patchman. If not, see <http://www.gnu.org/licenses/>
 
+import json
+
 from rest_framework import serializers
+
+from util.models import HostInventorySharedView
 
 
 class OperationRequestSerializer(serializers.Serializer):
@@ -113,3 +117,65 @@ class OperationRequestSerializer(serializers.Serializer):
 
         if 'cve_id' in params and not isinstance(params['cve_id'], str):
             raise serializers.ValidationError({'params': 'cve_id must be a string'})
+
+
+class HostInventorySharedViewMutationSerializer(serializers.Serializer):
+    name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    state = serializers.JSONField(required=False)
+    manage_token = serializers.CharField(required=False, allow_blank=True, max_length=128)
+
+    def validate_state(self, value):
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise serializers.ValidationError('Must be valid JSON.') from exc
+
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('Must be an object.')
+
+        cloud_filters = value.get('cloudFilters') or {}
+        if cloud_filters and not isinstance(cloud_filters, dict):
+            raise serializers.ValidationError({'cloudFilters': 'Must be an object.'})
+
+        normalized = {
+            'searchTerm': str(value.get('searchTerm') or '').strip(),
+            'sortField': str(value.get('sortField') or 'hostname').strip() or 'hostname',
+            'sortDir': -1 if value.get('sortDir') == -1 else 1,
+            'topTab': 'add-hosts' if value.get('topTab') == 'add-hosts' else 'host-management',
+            'cloudFilters': {
+                'provider': str(cloud_filters.get('provider') or '').strip(),
+                'region': str(cloud_filters.get('region') or '').strip(),
+                'projectOrSubscription': str(cloud_filters.get('projectOrSubscription') or '').strip(),
+                'resourceGroup': str(cloud_filters.get('resourceGroup') or '').strip(),
+            },
+        }
+        return normalized
+
+    def validate(self, attrs):
+        name = str(attrs.get('name') or '').strip()
+        if 'state' not in attrs and not self.partial:
+            raise serializers.ValidationError({'state': 'This field is required.'})
+        attrs['name'] = name or 'Shared view'
+        attrs['manage_token'] = str(attrs.get('manage_token') or '').strip()
+        return attrs
+
+
+class HostInventorySharedViewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HostInventorySharedView
+        fields = (
+            'id',
+            'name',
+            'state',
+            'share_token',
+            'manage_token',
+            'created_at',
+            'updated_at',
+        )
+
+    def to_representation(self, instance):
+        payload = super().to_representation(instance)
+        if not self.context.get('include_manage_token'):
+            payload.pop('manage_token', None)
+        return payload

@@ -15,6 +15,7 @@ from operatingsystems.models import OSRelease, OSVariant
 @override_settings(
     REQUIRE_API_KEY=False,
     CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}},
+    SECRET_KEY='test-secret-key',
 )
 class HostInventoryAPITests(APITestCase):
     def setUp(self):
