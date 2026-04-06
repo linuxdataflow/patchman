@@ -554,17 +554,23 @@ get_apt_updates() {
     # "The following upgrades have been deferred due to phasing:"
     local _tmpfile_deferred_names
     _tmpfile_deferred_names=$(mktemp)
-    apt -s upgrade 2>/dev/null \
+    LC_ALL=C apt -s upgrade 2>/dev/null \
     | awk '
         /^The following upgrades have been deferred due to phasing:$/ { in_block=1; next }
-        in_block && /^$/ { exit }
+        in_block && /^[[:space:]]*$/ { exit }
+        # Deferred package lines are indented; once indentation disappears we left the block.
+        in_block && $0 !~ /^[[:space:]]+/ { exit }
         in_block {
             for (i = 1; i <= NF; i++) {
-                print $i
+                token=$i
+                gsub(/,/, "", token)
+                if (token ~ /^[A-Za-z0-9][A-Za-z0-9+.-]*(:[A-Za-z0-9][A-Za-z0-9+.-]*)?$/) {
+                    sub(/:.*/, "", token)
+                    print token
+                }
             }
         }
     ' \
-    | sed -e 's/:.*$//' \
     | sort -u > "${_tmpfile_deferred_names}"
 
     # Collect all upgradable packages with phased updates explicitly included.
