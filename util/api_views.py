@@ -164,6 +164,27 @@ def _normalize_gcp_location(value):
     return location
 
 
+def _normalize_azure_location(value):
+    """Normalize Azure location (region) name. Handles resource-qualified paths and returns clean location."""
+    location = str(value or '').strip()
+    if not location:
+        return ''
+    if '/' in location:
+        location = location.rstrip('/').split('/')[-1]
+    return location
+
+
+def _normalize_azure_zone(value):
+    """Normalize Azure zone (numeric availability zone). Extracts zone number from zone qualifiers."""
+    zone = str(value or '').strip()
+    if not zone:
+        return ''
+    # Azure zones are usually single digits (1, 2, 3) or empty; handle resource-qualified paths
+    if '/' in zone:
+        zone = zone.rstrip('/').split('/')[-1]
+    return zone
+
+
 def _get_rundeck_resources(rundeck_host, project, token):
     if not rundeck_host:
         return []
@@ -283,6 +304,10 @@ class HostInventoryViewSet(viewsets.ViewSet):
             if provider == 'gcp':
                 zone = _normalize_gcp_zone(zone)
                 region = _normalize_gcp_location(region or zone)
+            # Normalize Azure location/zone for stable filtering.
+            if provider == 'azure':
+                zone = _normalize_azure_zone(zone)
+                region = _normalize_azure_location(region)
 
             enriched = dict(host)
             enriched['_provider'] = provider

@@ -345,3 +345,78 @@ class HostInventoryAPITests(APITestCase):
         item = response.data['results'][0]
         self.assertEqual(item['zone'], 'us-central1-a')
         self.assertEqual(item['region'], 'us-central1')  # Derived from zone
+
+    @patch('util.api_views.requests.get')
+    def test_azure_provider_alias_normalization(self, mock_get):
+        """Test that Azure provider name aliases are normalized to 'azure'."""
+        mock_response = Mock()
+        mock_response.ok = True
+        mock_response.json.return_value = [
+            {
+                'nodename': 'vm01.example.com',  # Match the test host
+                'hostname': '10.0.0.11',  # Match the test host IP
+                'inventory_provider': 'ms-azure',  # Azure alias: ms-azure -> should normalize to azure
+                'provider_vm_name': 'azure-vm',
+                'provider_instance_id': 'azure-1',
+                'subscription': 'my-subscription',
+                'location': 'eastus',
+                'resource_group': 'rg-prod',
+                'inventory_state': 'managed',
+            }
+        ]
+        mock_get.return_value = mock_response
+
+        response = self.client.get(
+            self.url,
+            {
+                'rundeck_host': 'http://rundeck.local',
+                'rundeck_project': 'patchman',
+                'provider': 'azure',  # Filter by normalized name
+            },
+            HTTP_X_RUNDECK_AUTH_TOKEN='token123',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Verify instance is returned when filtering by 'azure' even though source was 'ms-azure'
+        self.assertEqual(response.data['count'], 1)
+        item = response.data['results'][0]
+        self.assertEqual(item['provider'], 'azure')
+        self.assertEqual(item['region'], 'eastus')
+
+    @patch('util.api_views.requests.get')
+    def test_azure_location_normalization(self, mock_get):
+        """Test that Azure location is normalized and region filtering works."""
+        mock_response = Mock()
+        mock_response.ok = True
+        mock_response.json.return_value = [
+            {
+                'nodename': 'vm01.example.com',  # Match the test host
+                'hostname': '10.0.0.11',  # Match the test host IP
+                'inventory_provider': 'azure',
+                'provider_vm_name': 'location-instance',
+                'provider_instance_id': 'azure-2',
+                'subscription': 'my-subscription',
+                'location': 'westus2',  # Azure location
+                'zone': '2',  # Availability zone
+                'resource_group': 'rg-prod',
+                'inventory_state': 'managed',
+            }
+        ]
+        mock_get.return_value = mock_response
+
+        response = self.client.get(
+            self.url,
+            {
+                'rundeck_host': 'http://rundeck.local',
+                'rundeck_project': 'patchman',
+                'region': 'westus2',  # Filter by normalized location
+            },
+            HTTP_X_RUNDECK_AUTH_TOKEN='token123',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Verify instance is returned when filtering by region/location
+        self.assertEqual(response.data['count'], 1)
+        item = response.data['results'][0]
+        self.assertEqual(item['region'], 'westus2')
+        self.assertEqual(item['zone'], '2')
