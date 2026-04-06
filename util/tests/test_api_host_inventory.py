@@ -274,3 +274,74 @@ class HostInventoryAPITests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertNotIn('facets', response.data)
+
+    @patch('util.api_views.requests.get')
+    def test_gcp_provider_alias_normalization(self, mock_get):
+        """Test that GCP provider name aliases are normalized to 'gcp'."""
+        mock_response = Mock()
+        mock_response.ok = True
+        mock_response.json.return_value = [
+            {
+                'nodename': 'vm01.example.com',  # Match the test host
+                'hostname': '10.0.0.11',  # Match the test host IP
+                'inventory_provider': 'gce',  # GCP alias: gce -> should normalize to gcp
+                'provider_vm_name': 'gce-instance',
+                'provider_instance_id': 'gce-1',
+                'project': 'my-project',
+                'region': 'us-central1',
+                'inventory_state': 'managed',
+            }
+        ]
+        mock_get.return_value = mock_response
+
+        response = self.client.get(
+            self.url,
+            {
+                'rundeck_host': 'http://rundeck.local',
+                'rundeck_project': 'patchman',
+                'provider': 'gcp',  # Filter by normalized name
+            },
+            HTTP_X_RUNDECK_AUTH_TOKEN='token123',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Verify instance is returned when filtering by 'gcp' even though source was 'gce'
+        self.assertEqual(response.data['count'], 1)
+        item = response.data['results'][0]
+        self.assertEqual(item['provider'], 'gcp')
+
+    @patch('util.api_views.requests.get')
+    def test_gcp_zone_to_region_derivation(self, mock_get):
+        """Test that GCP zone is normalized and region is derived from zone if missing."""
+        mock_response = Mock()
+        mock_response.ok = True
+        mock_response.json.return_value = [
+            {
+                'nodename': 'vm01.example.com',  # Match the test host
+                'hostname': '10.0.0.11',  # Match the test host IP
+                'inventory_provider': 'gcp',
+                'provider_vm_name': 'zoned-instance',
+                'provider_instance_id': 'gce-2',
+                'project': 'my-project',
+                'zone': 'us-central1-a',  # Only zone provided, no region
+                'inventory_state': 'managed',
+            }
+        ]
+        mock_get.return_value = mock_response
+
+        response = self.client.get(
+            self.url,
+            {
+                'rundeck_host': 'http://rundeck.local',
+                'rundeck_project': 'patchman',
+                'region': 'us-central1',  # Filter by derived region from zone
+            },
+            HTTP_X_RUNDECK_AUTH_TOKEN='token123',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Verify instance is returned when filtering by region derived from zone
+        self.assertEqual(response.data['count'], 1)
+        item = response.data['results'][0]
+        self.assertEqual(item['zone'], 'us-central1-a')
+        self.assertEqual(item['region'], 'us-central1')  # Derived from zone

@@ -123,6 +123,47 @@ def _resource_value(resource, keys):
     return ''
 
 
+def _normalize_provider(value):
+    provider = str(value or '').strip().lower()
+    if provider in {'gce', 'google', 'google-cloud', 'google cloud', 'google_compute_engine'}:
+        return 'gcp'
+    if provider in {'ms-azure', 'microsoft-azure'}:
+        return 'azure'
+    return provider or 'patchman'
+
+
+def _normalize_gcp_zone(value):
+    zone = str(value or '').strip()
+    if not zone:
+        return ''
+    if '/' in zone:
+        zone = zone.rstrip('/').split('/')[-1]
+    return zone
+
+
+def _region_from_zone(zone):
+    zone_value = _normalize_gcp_zone(zone)
+    if not zone_value:
+        return ''
+    if zone_value.count('-') >= 2:
+        return '-'.join(zone_value.split('-')[:-1])
+    return ''
+
+
+def _normalize_gcp_location(value):
+    location = str(value or '').strip()
+    if not location:
+        return ''
+    if '/' in location:
+        location = location.rstrip('/').split('/')[-1]
+
+    # If the location is actually a zone, fold it to region so filtering remains stable.
+    zone_region = _region_from_zone(location)
+    if zone_region:
+        return zone_region
+    return location
+
+
 def _get_rundeck_resources(rundeck_host, project, token):
     if not rundeck_host:
         return []
@@ -202,6 +243,7 @@ class HostInventoryViewSet(viewsets.ViewSet):
             )
 
             provider = (matched or {}).get('inventory_provider') or (matched or {}).get('provider') or 'patchman'
+            provider = _normalize_provider(provider)
             provider_vm_name = (
                 (matched or {}).get('provider_vm_name')
                 or (matched or {}).get('vm_name')
@@ -237,6 +279,10 @@ class HostInventoryViewSet(viewsets.ViewSet):
             ) or project_or_subscription
             region = _resource_value(matched, ['region', 'location'])
             zone = _resource_value(matched, ['zone'])
+            # Normalize GCP region/zone: fold zone into region for stable regional filtering.
+            if provider == 'gcp':
+                zone = _normalize_gcp_zone(zone)
+                region = _normalize_gcp_location(region or zone)
 
             enriched = dict(host)
             enriched['_provider'] = provider
