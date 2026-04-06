@@ -464,7 +464,9 @@ class HostInventorySharedViewSet(viewsets.ViewSet):
     def retrieve(self, request, share_token=None):
         shared_view = self.get_object()
         serializer = HostInventorySharedViewSerializer(shared_view, context=self._serializer_context())
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        response = Response(serializer.data, status=status.HTTP_200_OK)
+        response['Cache-Control'] = 'no-store'
+        return response
 
     @action(detail=True, methods=['post'], url_path='save')
     def save_view(self, request, share_token=None):
@@ -495,7 +497,9 @@ class HostInventorySharedViewSet(viewsets.ViewSet):
             return Response({'detail': 'Invalid manage token.'}, status=status.HTTP_403_FORBIDDEN)
 
         shared_view.delete()
-        return Response({'status': 'deleted'}, status=status.HTTP_200_OK)
+        response = Response({'status': 'deleted'}, status=status.HTTP_200_OK)
+        response['Cache-Control'] = 'no-store'
+        return response
 
 
 class OperationViewSet(viewsets.ViewSet):
