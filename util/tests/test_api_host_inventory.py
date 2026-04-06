@@ -48,6 +48,9 @@ class HostInventoryAPITests(APITestCase):
                 'provider_vm_name': 'lab-vm-01',
                 'provider_instance_id': '1001',
                 'inventory_state': 'managed',
+                'region': 'homelab-east',
+                'project': 'core-lab',
+                'resource_group': 'infra',
             }
         ]
         mock_get.return_value = mock_response
@@ -67,6 +70,10 @@ class HostInventoryAPITests(APITestCase):
         self.assertEqual(response.data['results'][0]['hostname'], 'vm01.example.com')
         self.assertEqual(response.data['results'][0]['_provider'], 'proxmox')
         self.assertEqual(response.data['results'][0]['_providerVmName'], 'lab-vm-01')
+        self.assertEqual(response.data['results'][0]['provider'], 'proxmox')
+        self.assertEqual(response.data['results'][0]['region'], 'homelab-east')
+        self.assertEqual(response.data['results'][0]['project_or_subscription'], 'core-lab')
+        self.assertEqual(response.data['results'][0]['resource_group_or_folder'], 'infra')
 
     @patch('util.api_views.requests.get')
     def test_search_by_provider_vm_name(self, mock_get):
@@ -124,3 +131,79 @@ class HostInventoryAPITests(APITestCase):
         self.assertEqual(first.status_code, status.HTTP_200_OK)
         self.assertEqual(second.status_code, status.HTTP_200_OK)
         self.assertEqual(mock_get.call_count, 1)
+
+    @patch('util.api_views.requests.get')
+    def test_filters_by_provider_region_and_project_scope(self, mock_get):
+        mock_response = Mock()
+        mock_response.ok = True
+        mock_response.json.return_value = [
+            {
+                'nodename': 'vm01.example.com',
+                'hostname': '10.0.0.11',
+                'inventory_provider': 'gcp',
+                'provider_vm_name': 'gce-vm-01',
+                'provider_instance_id': 'gcp-1',
+                'project': 'proj-a',
+                'region': 'us-central1',
+                'resource_group': '',
+                'inventory_state': 'managed',
+            }
+        ]
+        mock_get.return_value = mock_response
+
+        response = self.client.get(
+            self.url,
+            {
+                'rundeck_host': 'http://rundeck.local',
+                'rundeck_project': 'patchman',
+                'provider': 'gcp',
+                'region': 'us-central1',
+                'project_or_subscription': 'proj-a',
+            },
+            HTTP_X_RUNDECK_AUTH_TOKEN='token123',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        item = response.data['results'][0]
+        self.assertEqual(item['provider'], 'gcp')
+        self.assertEqual(item['region'], 'us-central1')
+        self.assertEqual(item['project_or_subscription'], 'proj-a')
+
+    @patch('util.api_views.requests.get')
+    def test_filters_by_resource_group_and_account_scope(self, mock_get):
+        mock_response = Mock()
+        mock_response.ok = True
+        mock_response.json.return_value = [
+            {
+                'nodename': 'vm01.example.com',
+                'hostname': '10.0.0.11',
+                'inventory_provider': 'azure',
+                'provider_vm_name': 'az-vm-01',
+                'provider_instance_id': 'az-1',
+                'subscription_id': 'sub-prod',
+                'resource_group': 'rg-prod',
+                'tenant_id': 'tenant-main',
+                'region': 'canadacentral',
+                'inventory_state': 'managed',
+            }
+        ]
+        mock_get.return_value = mock_response
+
+        response = self.client.get(
+            self.url,
+            {
+                'rundeck_host': 'http://rundeck.local',
+                'rundeck_project': 'patchman',
+                'resource_group': 'rg-prod',
+                'account_scope': 'tenant-main',
+            },
+            HTTP_X_RUNDECK_AUTH_TOKEN='token123',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        item = response.data['results'][0]
+        self.assertEqual(item['project_or_subscription'], 'sub-prod')
+        self.assertEqual(item['resource_group_or_folder'], 'rg-prod')
+        self.assertEqual(item['account_scope'], 'tenant-main')

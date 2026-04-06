@@ -101,6 +101,20 @@ def _build_resource_indexes(resources):
     }
 
 
+def _resource_value(resource, keys):
+    if not resource:
+        return ''
+
+    attrs = resource.get('attributes') if isinstance(resource.get('attributes'), dict) else {}
+    for key in keys:
+        value = resource.get(key)
+        if value is None or value == '':
+            value = attrs.get(key)
+        if value is not None and value != '':
+            return str(value).strip()
+    return ''
+
+
 def _get_rundeck_resources(rundeck_host, project, token):
     if not rundeck_host:
         return []
@@ -144,6 +158,15 @@ class HostInventoryViewSet(viewsets.ViewSet):
         page_size = min(max(page_size, 1), 200)
         search = str(request.query_params.get('search', '') or '').strip().lower()
         ordering = str(request.query_params.get('ordering', 'hostname') or 'hostname')
+        provider_filter = str(request.query_params.get('provider', '') or '').strip().lower()
+        region_filter = str(request.query_params.get('region', '') or '').strip().lower()
+        project_filter = str(request.query_params.get('project', '') or '').strip().lower()
+        subscription_filter = str(request.query_params.get('subscription', '') or '').strip().lower()
+        project_or_subscription_filter = str(
+            request.query_params.get('project_or_subscription', '') or ''
+        ).strip().lower()
+        resource_group_filter = str(request.query_params.get('resource_group', '') or '').strip().lower()
+        account_scope_filter = str(request.query_params.get('account_scope', '') or '').strip().lower()
 
         rundeck_host = str(request.query_params.get('rundeck_host', '') or '').strip()
         rundeck_project = str(request.query_params.get('rundeck_project', 'patchman') or 'patchman').strip()
@@ -181,12 +204,72 @@ class HostInventoryViewSet(viewsets.ViewSet):
                 or ''
             )
 
+            project_or_subscription = _resource_value(
+                matched,
+                [
+                    'project_or_subscription',
+                    'project',
+                    'project_id',
+                    'gcp_project',
+                    'subscription',
+                    'subscription_id',
+                    'azure_subscription_id',
+                ],
+            )
+            resource_group_or_folder = _resource_value(
+                matched,
+                ['resource_group_or_folder', 'resource_group', 'resourcegroup', 'folder'],
+            )
+            account_scope = _resource_value(
+                matched,
+                ['account_scope', 'organization', 'org', 'tenant_id', 'tenant'],
+            ) or project_or_subscription
+            region = _resource_value(matched, ['region', 'location'])
+            zone = _resource_value(matched, ['zone'])
+
             enriched = dict(host)
             enriched['_provider'] = provider
             enriched['_providerVmName'] = provider_vm_name
             enriched['_providerInstanceId'] = provider_instance_id
             enriched['inventory_state'] = (matched or {}).get('inventory_state') or 'managed'
+            # Canonical multi-cloud fields for cross-provider filtering and display.
+            enriched['provider'] = provider
+            enriched['resource_id'] = provider_instance_id
+            enriched['instance_name'] = provider_vm_name or hostname
+            enriched['project_or_subscription'] = project_or_subscription
+            enriched['resource_group_or_folder'] = resource_group_or_folder
+            enriched['account_scope'] = account_scope
+            enriched['region'] = region
+            enriched['zone'] = zone
             merged.append(enriched)
+
+        if provider_filter:
+            merged = [
+                item for item in merged
+                if str(item.get('provider') or '').strip().lower() == provider_filter
+            ]
+        if region_filter:
+            merged = [
+                item for item in merged
+                if str(item.get('region') or '').strip().lower() == region_filter
+            ]
+
+        project_scope_filter = project_or_subscription_filter or project_filter or subscription_filter
+        if project_scope_filter:
+            merged = [
+                item for item in merged
+                if str(item.get('project_or_subscription') or '').strip().lower() == project_scope_filter
+            ]
+        if resource_group_filter:
+            merged = [
+                item for item in merged
+                if str(item.get('resource_group_or_folder') or '').strip().lower() == resource_group_filter
+            ]
+        if account_scope_filter:
+            merged = [
+                item for item in merged
+                if str(item.get('account_scope') or '').strip().lower() == account_scope_filter
+            ]
 
         if search:
             def _match(item):
@@ -197,6 +280,11 @@ class HostInventoryViewSet(viewsets.ViewSet):
                     str(item.get('_provider') or ''),
                     str(item.get('_providerVmName') or ''),
                     str(item.get('_providerInstanceId') or ''),
+                    str(item.get('project_or_subscription') or ''),
+                    str(item.get('resource_group_or_folder') or ''),
+                    str(item.get('account_scope') or ''),
+                    str(item.get('region') or ''),
+                    str(item.get('zone') or ''),
                     ' '.join(item.get('tags') or []),
                 ]).lower()
                 return search in haystack
@@ -221,6 +309,11 @@ class HostInventoryViewSet(viewsets.ViewSet):
             'provider': '_provider',
             'provider_vm_name': '_providerVmName',
             'provider_instance_id': '_providerInstanceId',
+            'project_or_subscription': 'project_or_subscription',
+            'resource_group_or_folder': 'resource_group_or_folder',
+            'account_scope': 'account_scope',
+            'region': 'region',
+            'zone': 'zone',
         }
         key_name = field_map.get(sort_field, 'hostname')
         merged.sort(key=lambda item: str(item.get(key_name) or '').lower(), reverse=descending)
