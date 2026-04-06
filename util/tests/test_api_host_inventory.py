@@ -207,3 +207,69 @@ class HostInventoryAPITests(APITestCase):
         self.assertEqual(item['project_or_subscription'], 'sub-prod')
         self.assertEqual(item['resource_group_or_folder'], 'rg-prod')
         self.assertEqual(item['account_scope'], 'tenant-main')
+
+    @patch('util.api_views.requests.get')
+    def test_response_includes_cloud_facets(self, mock_get):
+        mock_response = Mock()
+        mock_response.ok = True
+        mock_response.json.return_value = [
+            {
+                'nodename': 'vm01.example.com',
+                'hostname': '10.0.0.11',
+                'inventory_provider': 'gcp',
+                'provider_vm_name': 'gce-vm-01',
+                'provider_instance_id': 'gcp-1',
+                'project': 'proj-a',
+                'region': 'us-central1',
+                'resource_group': 'folder-a',
+                'inventory_state': 'managed',
+            }
+        ]
+        mock_get.return_value = mock_response
+
+        response = self.client.get(
+            self.url,
+            {
+                'rundeck_host': 'http://rundeck.local',
+                'rundeck_project': 'patchman',
+            },
+            HTTP_X_RUNDECK_AUTH_TOKEN='token123',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('facets', response.data)
+        facets = response.data['facets']
+        self.assertIn('provider', facets)
+        self.assertIn('region', facets)
+        self.assertIn('project_or_subscription', facets)
+        self.assertIn('resource_group_or_folder', facets)
+        self.assertEqual(facets['provider'][0]['value'], 'gcp')
+
+    @patch('util.api_views.requests.get')
+    def test_include_facets_false_omits_facets(self, mock_get):
+        mock_response = Mock()
+        mock_response.ok = True
+        mock_response.json.return_value = [
+            {
+                'nodename': 'vm01.example.com',
+                'hostname': '10.0.0.11',
+                'inventory_provider': 'proxmox',
+                'provider_vm_name': 'vm-one',
+                'provider_instance_id': '1001',
+                'inventory_state': 'managed',
+            }
+        ]
+        mock_get.return_value = mock_response
+
+        response = self.client.get(
+            self.url,
+            {
+                'rundeck_host': 'http://rundeck.local',
+                'rundeck_project': 'patchman',
+                'include_facets': 'false',
+            },
+            HTTP_X_RUNDECK_AUTH_TOKEN='token123',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn('facets', response.data)

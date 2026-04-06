@@ -158,6 +158,9 @@ class HostInventoryViewSet(viewsets.ViewSet):
         page_size = min(max(page_size, 1), 200)
         search = str(request.query_params.get('search', '') or '').strip().lower()
         ordering = str(request.query_params.get('ordering', 'hostname') or 'hostname')
+        include_facets = str(request.query_params.get('include_facets', 'true') or 'true').strip().lower() in {
+            '1', 'true', 'yes', 'on'
+        }
         provider_filter = str(request.query_params.get('provider', '') or '').strip().lower()
         region_filter = str(request.query_params.get('region', '') or '').strip().lower()
         project_filter = str(request.query_params.get('project', '') or '').strip().lower()
@@ -318,6 +321,30 @@ class HostInventoryViewSet(viewsets.ViewSet):
         key_name = field_map.get(sort_field, 'hostname')
         merged.sort(key=lambda item: str(item.get(key_name) or '').lower(), reverse=descending)
 
+        facets = None
+        if include_facets:
+            def _facet_counts(field_name):
+                counts = {}
+                for item in merged:
+                    value = str(item.get(field_name) or '').strip()
+                    if not value:
+                        continue
+                    counts[value] = counts.get(value, 0) + 1
+
+                values = list(counts.keys())
+                values.sort(key=lambda val: (-counts[val], val.lower()))
+                return [
+                    {'value': value, 'count': counts[value]}
+                    for value in values
+                ]
+
+            facets = {
+                'provider': _facet_counts('provider'),
+                'region': _facet_counts('region'),
+                'project_or_subscription': _facet_counts('project_or_subscription'),
+                'resource_group_or_folder': _facet_counts('resource_group_or_folder'),
+            }
+
         total = len(merged)
         start = (page - 1) * page_size
         end = start + page_size
@@ -338,15 +365,16 @@ class HostInventoryViewSet(viewsets.ViewSet):
         next_url = build_page_url(page + 1)
         previous_url = build_page_url(page - 1) if page > 1 else None
 
-        return Response(
-            {
-                'count': total,
-                'next': next_url,
-                'previous': previous_url,
-                'results': results,
-            },
-            status=status.HTTP_200_OK,
-        )
+        payload = {
+            'count': total,
+            'next': next_url,
+            'previous': previous_url,
+            'results': results,
+        }
+        if facets is not None:
+            payload['facets'] = facets
+
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class CeleryMetricsViewSet(viewsets.ViewSet):
