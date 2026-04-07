@@ -18,7 +18,7 @@ import json
 
 from rest_framework import serializers
 
-from util.models import HostInventorySharedView
+from util.models import HostInventoryHostgroup
 
 
 class OperationRequestSerializer(serializers.Serializer):
@@ -119,10 +119,9 @@ class OperationRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError({'params': 'cve_id must be a string'})
 
 
-class HostInventorySharedViewMutationSerializer(serializers.Serializer):
+class HostInventoryHostgroupMutationSerializer(serializers.Serializer):
     name = serializers.CharField(required=False, allow_blank=True, max_length=255)
     state = serializers.JSONField(required=False)
-    manage_token = serializers.CharField(required=False, allow_blank=True, max_length=128)
 
     def validate_state(self, value):
         if isinstance(value, str):
@@ -156,26 +155,17 @@ class HostInventorySharedViewMutationSerializer(serializers.Serializer):
         name = str(attrs.get('name') or '').strip()
         if 'state' not in attrs and not self.partial:
             raise serializers.ValidationError({'state': 'This field is required.'})
-        attrs['name'] = name or 'Shared view'
-        attrs['manage_token'] = str(attrs.get('manage_token') or '').strip()
+        attrs['name'] = name or 'Hostgroup'
         return attrs
 
 
-class HostInventorySharedViewSerializer(serializers.ModelSerializer):
+class HostInventoryHostgroupSerializer(serializers.ModelSerializer):
     class Meta:
-        model = HostInventorySharedView
+        model = HostInventoryHostgroup
         fields = (
             'id',
             'name',
             'state',
-            'share_token',
-            'manage_token',
             'created_at',
             'updated_at',
         )
-
-    def to_representation(self, instance):
-        payload = super().to_representation(instance)
-        if not self.context.get('include_manage_token'):
-            payload.pop('manage_token', None)
-        return payload

@@ -25,7 +25,6 @@ from django.shortcuts import get_object_or_404
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import never_cache
 from rest_framework import status, viewsets
-from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
@@ -46,10 +45,10 @@ from security.tasks import update_cve, update_cves
 from patchman.celery import app as celery_app
 from util.api_serializers import OperationRequestSerializer
 from util.api_serializers import (
-    HostInventorySharedViewMutationSerializer,
-    HostInventorySharedViewSerializer,
+    HostInventoryHostgroupMutationSerializer,
+    HostInventoryHostgroupSerializer,
 )
-from util.models import HostInventorySharedView
+from util.models import HostInventoryHostgroup
 from util.tasks import clean_database
 
 
@@ -509,73 +508,59 @@ class CeleryMetricsViewSet(viewsets.ViewSet):
 
 
 @method_decorator(never_cache, name='dispatch')
-class HostInventorySharedViewSet(viewsets.ViewSet):
-    """Persist and share host inventory view state via opaque tokens."""
-
-    lookup_field = 'share_token'
-    lookup_value_regex = r'[-\w]+'
+class HostInventoryHostgroupViewSet(viewsets.ViewSet):
+    """Persist host inventory hostgroups shared across all users."""
 
     def get_permissions(self):
         return [AllowAny()]
 
-    def get_object(self):
-        return get_object_or_404(HostInventorySharedView, share_token=self.kwargs[self.lookup_field])
-
-    def _serializer_context(self, include_manage_token=False):
-        return {'request': self.request, 'include_manage_token': include_manage_token}
-
-    def _check_manage_token(self, shared_view, supplied_token):
-        token = str(supplied_token or '').strip()
-        return token and token == shared_view.manage_token
+    def list(self, request):
+        hostgroups = HostInventoryHostgroup.objects.all()
+        serializer = HostInventoryHostgroupSerializer(hostgroups, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     def create(self, request):
-        serializer = HostInventorySharedViewMutationSerializer(data=request.data)
+        serializer = HostInventoryHostgroupMutationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        shared_view = HostInventorySharedView.objects.create(
+        hostgroup = HostInventoryHostgroup.objects.create(
             name=serializer.validated_data['name'],
             state=serializer.validated_data['state'],
         )
-        response_serializer = HostInventorySharedViewSerializer(
-            shared_view,
-            context=self._serializer_context(include_manage_token=True),
-        )
+        response_serializer = HostInventoryHostgroupSerializer(hostgroup)
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)
 
-    def retrieve(self, request, share_token=None):
-        shared_view = self.get_object()
-        serializer = HostInventorySharedViewSerializer(shared_view, context=self._serializer_context())
+    def retrieve(self, request, pk=None):
+        hostgroup = get_object_or_404(HostInventoryHostgroup, pk=pk)
+        serializer = HostInventoryHostgroupSerializer(hostgroup)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=['post'], url_path='save')
-    def save_view(self, request, share_token=None):
-        shared_view = self.get_object()
-        serializer = HostInventorySharedViewMutationSerializer(data=request.data, partial=True)
+    def update(self, request, pk=None):
+        hostgroup = get_object_or_404(HostInventoryHostgroup, pk=pk)
+        serializer = HostInventoryHostgroupMutationSerializer(data=request.data, partial=False)
         serializer.is_valid(raise_exception=True)
-
-        if not self._check_manage_token(shared_view, serializer.validated_data.get('manage_token')):
-            return Response({'detail': 'Invalid manage token.'}, status=status.HTTP_403_FORBIDDEN)
-
-        if 'name' in serializer.validated_data:
-            shared_view.name = serializer.validated_data['name'] or shared_view.name
-        if 'state' in serializer.validated_data:
-            shared_view.state = serializer.validated_data['state']
-        shared_view.save(update_fields=['name', 'state', 'updated_at'])
-
-        response_serializer = HostInventorySharedViewSerializer(
-            shared_view,
-            context=self._serializer_context(include_manage_token=True),
-        )
+        hostgroup.name = serializer.validated_data['name']
+        hostgroup.state = serializer.validated_data['state']
+        hostgroup.save(update_fields=['name', 'state', 'updated_at'])
+        response_serializer = HostInventoryHostgroupSerializer(hostgroup)
         return Response(response_serializer.data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=['post'], url_path='delete')
-    def delete_view(self, request, share_token=None):
-        shared_view = self.get_object()
-        manage_token = request.data.get('manage_token') or request.query_params.get('manage_token')
-        if not self._check_manage_token(shared_view, manage_token):
-            return Response({'detail': 'Invalid manage token.'}, status=status.HTTP_403_FORBIDDEN)
+    def partial_update(self, request, pk=None):
+        hostgroup = get_object_or_404(HostInventoryHostgroup, pk=pk)
+        serializer = HostInventoryHostgroupMutationSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
 
-        shared_view.delete()
+        if 'name' in serializer.validated_data:
+            hostgroup.name = serializer.validated_data['name'] or hostgroup.name
+        if 'state' in serializer.validated_data:
+            hostgroup.state = serializer.validated_data['state']
+        hostgroup.save(update_fields=['name', 'state', 'updated_at'])
+        response_serializer = HostInventoryHostgroupSerializer(hostgroup)
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+    def destroy(self, request, pk=None):
+        hostgroup = get_object_or_404(HostInventoryHostgroup, pk=pk)
+        hostgroup.delete()
         return Response({'status': 'deleted'}, status=status.HTTP_200_OK)
 
 
