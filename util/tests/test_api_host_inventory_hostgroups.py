@@ -10,7 +10,7 @@ from util.models import HostInventoryHostgroup
     SECRET_KEY='test-secret-key',
     CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}},
 )
-class HostInventorySharedViewApiTests(APITestCase):
+class HostInventoryHostgroupApiTests(APITestCase):
     def setUp(self):
         self.url = '/api/hostgroup/'
 
@@ -80,7 +80,7 @@ class HostInventorySharedViewApiTests(APITestCase):
     SECRET_KEY='test-secret-key',
     CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}},
 )
-class HostInventorySharedViewApiAuthBypassTests(APITestCase):
+class HostInventoryHostgroupApiAuthBypassTests(APITestCase):
     def test_create_remains_open_when_api_key_setting_enabled(self):
         response = self.client.post(
             '/api/hostgroup/',
