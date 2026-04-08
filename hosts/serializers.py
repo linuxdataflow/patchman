@@ -38,7 +38,12 @@ class HostSerializer(serializers.HyperlinkedModelSerializer):
                   'updated_at', 'bugfix_update_count', 'security_update_count',
                   'local_bugfix_update_count', 'local_security_update_count',
                   'local_phased_deferred_count',
-                  'calculated_bugfix_update_count', 'calculated_security_update_count')
+                  'calculated_bugfix_update_count', 'calculated_security_update_count',
+                  'provider_name', 'provider_instance_id', 'provider_vm_name',
+                  'provider_region', 'provider_zone', 'provider_account_scope',
+                  'provider_resource_group', 'provider_machine_id',
+                  'last_provider_power_state', 'last_provider_sync_at',
+                  'reconcile_confidence', 'reconcile_reason')
 
     def get_bugfix_update_count(self, obj):
         return obj.calc_bug_updates_count

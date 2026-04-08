@@ -332,6 +332,17 @@ class HostViewSet(viewsets.ModelViewSet):
         'calculated_bugfix_update_count': 'calc_bug_updates_count',
         'calculated_security_update_count': 'calc_sec_updates_count',
         'reboot_required': 'reboot_required',
+        'provider_name': 'provider_name',
+        'provider_instance_id': 'provider_instance_id',
+        'provider_vm_name': 'provider_vm_name',
+        'provider_region': 'provider_region',
+        'provider_zone': 'provider_zone',
+        'provider_account_scope': 'provider_account_scope',
+        'provider_resource_group': 'provider_resource_group',
+        'provider_machine_id': 'provider_machine_id',
+        'last_provider_power_state': 'last_provider_power_state',
+        'last_provider_sync_at': 'last_provider_sync_at',
+        'reconcile_confidence': 'reconcile_confidence',
     }
     ordering = ['hostname']
     pagination_class = HostPagination

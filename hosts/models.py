@@ -70,6 +70,18 @@ class Host(models.Model):
     bug_updates_count = models.PositiveIntegerField(default=0, db_index=True)
     packages_count = models.PositiveIntegerField(default=0, db_index=True)
     errata_count = models.PositiveIntegerField(default=0, db_index=True)
+    provider_name = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+    provider_instance_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    provider_vm_name = models.CharField(max_length=255, blank=True, null=True)
+    provider_region = models.CharField(max_length=128, blank=True, null=True)
+    provider_zone = models.CharField(max_length=128, blank=True, null=True)
+    provider_account_scope = models.CharField(max_length=255, blank=True, null=True)
+    provider_resource_group = models.CharField(max_length=255, blank=True, null=True)
+    provider_machine_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
+    last_provider_power_state = models.CharField(max_length=64, blank=True, null=True)
+    last_provider_sync_at = models.DateTimeField(blank=True, null=True)
+    reconcile_confidence = models.CharField(max_length=16, default='unknown', db_index=True)
+    reconcile_reason = models.CharField(max_length=255, blank=True, null=True)
 
     from hosts.managers import HostManager
     objects = HostManager()
