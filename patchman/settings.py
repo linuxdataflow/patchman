@@ -171,7 +171,17 @@ with open(local_settings, 'r', encoding='utf_8') as ls:
     exec(compile(ls.read(), local_settings, 'exec'))
 
 if not globals().get('SECRET_KEY'):
-    SECRET_KEY = 'patchman-dev-secret-key'
+    _is_test = (
+        os.environ.get('DJANGO_SETTINGS_MODULE', '').endswith('test_settings')
+        or 'PYTEST_CURRENT_TEST' in os.environ
+    )
+    if _is_test:
+        SECRET_KEY = 'patchman-dev-secret-key'
+    else:
+        from django.core.exceptions import ImproperlyConfigured
+        raise ImproperlyConfigured(
+            'SECRET_KEY must be configured in local_settings.py'
+        )
 
 INSTALLED_APPS = DEFAULT_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 

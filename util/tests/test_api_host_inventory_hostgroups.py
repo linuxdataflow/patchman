@@ -1,3 +1,4 @@
+from django.contrib.auth.models import User
 from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -13,6 +14,8 @@ from util.models import HostInventoryHostgroup
 class HostInventoryHostgroupApiTests(APITestCase):
     def setUp(self):
         self.url = '/api/hostgroup/'
+        self.user = User.objects.create_user(username='hguser', password='hgpass')
+        self.client.force_authenticate(user=self.user)
 
     def test_create_hostgroup(self):
         response = self.client.post(
@@ -47,7 +50,7 @@ class HostInventoryHostgroupApiTests(APITestCase):
         self.assertEqual(response.data['name'], 'GCP Group')
         self.assertEqual(response.data['state']['cloudFilters']['provider'], 'gcp')
 
-    def test_patch_updates_hostgroup_without_tokens(self):
+    def test_patch_updates_hostgroup(self):
         hostgroup = HostInventoryHostgroup.objects.create(
             name='Baseline',
             state={'searchTerm': 'old'},
@@ -74,6 +77,20 @@ class HostInventoryHostgroupApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertFalse(HostInventoryHostgroup.objects.filter(id=hostgroup.id).exists())
 
+    def test_unauthenticated_write_is_rejected(self):
+        self.client.force_authenticate(user=None)
+        response = self.client.post(
+            self.url,
+            {'name': 'Open', 'state': {'searchTerm': 'open'}},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_unauthenticated_read_is_allowed(self):
+        self.client.force_authenticate(user=None)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
 
 @override_settings(
     REQUIRE_API_KEY=True,
@@ -81,11 +98,11 @@ class HostInventoryHostgroupApiTests(APITestCase):
     CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}},
 )
 class HostInventoryHostgroupApiAuthBypassTests(APITestCase):
-    def test_create_remains_open_when_api_key_setting_enabled(self):
+    def test_unauthenticated_create_is_rejected_when_api_key_required(self):
         response = self.client.post(
             '/api/hostgroup/',
             {'name': 'Open', 'state': {'searchTerm': 'open'}},
             format='json',
         )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

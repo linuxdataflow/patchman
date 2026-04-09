@@ -137,9 +137,11 @@ def add_updates(updates, host):
     ulen = len(updates)
     update_ids = []
     if ulen > 0:
+        # Pre-compute package type once to avoid an extra query per update.
+        host_package_type = host.packages.values_list('packagetype', flat=True).order_by().first()
         pbar_start.send(sender=None, ptext=f'{host} Updates', plen=ulen)
         for i, (u, sec) in enumerate(updates.items()):
-            update = process_update_text(host, u, sec)
+            update = process_update_text(host, u, sec, host_package_type=host_package_type)
             if update:
                 update_ids.append(update.id)
             pbar_update.send(sender=None, index=i + 1)
@@ -195,7 +197,7 @@ def set_local_update_counts(host, sec_count, bug_count, phased_count=0):
     ])
 
 
-def process_update_text(host, update_string, security):
+def process_update_text(host, update_string, security, host_package_type=None):
     """ Processes a single sanitized update string and converts to an update
         object. Only works if the original package exists. Returns None otherwise
     """
@@ -208,15 +210,17 @@ def process_update_text(host, update_string, security):
 
     p_epoch, p_version, p_release = find_evr(update_str[1])
 
-    return process_update(host, p_name, p_epoch, p_version, p_release, p_arch, repo_id, security)
+    return process_update(host, p_name, p_epoch, p_version, p_release, p_arch, repo_id, security,
+                          host_package_type=host_package_type)
 
 
-def process_update(host, name, epoch, version, release, arch, repo_id, security):
+def process_update(host, name, epoch, version, release, arch, repo_id, security, host_package_type=None):
     """ Core update processing logic shared by text and JSON handlers
     """
-    # Determine package type from the host's installed packages; fall back to RPM
-    host_pkg_type = host.packages.values_list('packagetype', flat=True).order_by().first()
-    p_type = host_pkg_type if host_pkg_type else Package.RPM
+    # Use pre-computed type if provided, otherwise query once and fall back to RPM.
+    if host_package_type is None:
+        host_package_type = host.packages.values_list('packagetype', flat=True).order_by().first()
+    p_type = host_package_type if host_package_type else Package.RPM
 
     package = get_or_create_package(
         name=name,
@@ -645,7 +649,7 @@ def process_modules_json(modules_json, host):
     host.modules.set(module_ids)
 
 
-def process_update_json(host, update, security):
+def process_update_json(host, update, security, host_package_type=None):
     """ Processes a single JSON update dict and converts to an update object
     """
     name = update.get('name')
@@ -655,7 +659,8 @@ def process_update_json(host, update, security):
 
     p_epoch, p_version, p_release = find_evr(version)
 
-    return process_update(host, name, p_epoch, p_version, p_release, arch, repo_id, security)
+    return process_update(host, name, p_epoch, p_version, p_release, arch, repo_id, security,
+                          host_package_type=host_package_type)
 
 
 def process_updates_json(sec_updates_json, bug_updates_json, host, phased_deferred_updates_json=None):
@@ -674,9 +679,11 @@ def process_updates_json(sec_updates_json, bug_updates_json, host, phased_deferr
     update_ids = []
 
     if all_updates:
+        # Pre-compute package type once to avoid an extra query per update.
+        host_package_type = host.packages.values_list('packagetype', flat=True).order_by().first()
         pbar_start.send(sender=None, ptext=f'{host} Updates', plen=len(all_updates))
         for i, (update, security) in enumerate(all_updates):
-            update_obj = process_update_json(host, update, security)
+            update_obj = process_update_json(host, update, security, host_package_type=host_package_type)
             if update_obj:
                 update_ids.append(update_obj.id)
             pbar_update.send(sender=None, index=i + 1)

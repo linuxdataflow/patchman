@@ -26,7 +26,6 @@ from django_filters import rest_framework as filters
 from django_tables2 import RequestConfig
 from rest_framework import filters as drf_filters, pagination, viewsets
 from taggit.models import Tag
-
 from arch.models import MachineArchitecture
 from domains.models import Domain
 from hosts.forms import EditHostForm
@@ -311,6 +310,45 @@ class HostPagination(pagination.PageNumberPagination):
     max_page_size = 200
 
 
+class AliasedOrderingFilter(drf_filters.OrderingFilter):
+    """
+    Custom ordering filter that supports a dict mapping of public alias names
+    to model field names in the view's ``ordering_fields`` attribute.
+
+    DRF's built-in ``OrderingFilter`` expects a list of allowed field names and
+    passes them straight to ``queryset.order_by()``.  When ``ordering_fields``
+    is a dict the values (model field names) would never be resolved, so
+    ``?ordering=bugfix_update_count`` would try to sort by a non-existent
+    model field and raise a 500.  This subclass translates public aliases to
+    the correct model field names before they reach the queryset.
+    """
+
+    def get_valid_fields(self, queryset, view, context=None):
+        # ``context`` is part of the parent interface but not needed here.
+        ordering_fields = getattr(view, 'ordering_fields', None)
+        if isinstance(ordering_fields, dict):
+            return list(ordering_fields.items())
+        return super().get_valid_fields(queryset, view, context)
+
+    def get_ordering(self, request, queryset, view):
+        ordering_fields = getattr(view, 'ordering_fields', None)
+        if not isinstance(ordering_fields, dict):
+            return super().get_ordering(request, queryset, view)
+
+        params = request.query_params.get(self.ordering_param)
+        if not params:
+            return self.get_default_ordering(view)
+
+        result = []
+        for field in [p.strip() for p in params.split(',')]:
+            desc = field.startswith('-')
+            alias = field.lstrip('-')
+            model_field = ordering_fields.get(alias)
+            if model_field:
+                result.append(f'-{model_field}' if desc else model_field)
+        return result or self.get_default_ordering(view)
+
+
 class HostViewSet(viewsets.ModelViewSet):
     """
     API endpoint that allows hosts to be viewed or edited.
@@ -318,7 +356,7 @@ class HostViewSet(viewsets.ModelViewSet):
     queryset = Host.objects.select_related('osvariant', 'arch', 'domain').all()
     serializer_class = HostSerializer
     filterset_class = HostFilter
-    filter_backends = [filters.DjangoFilterBackend, drf_filters.OrderingFilter]
+    filter_backends = [filters.DjangoFilterBackend, AliasedOrderingFilter]
     ordering_fields = {
         'hostname': 'hostname',
         'ipaddress': 'ipaddress',

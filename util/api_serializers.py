@@ -152,10 +152,11 @@ class HostInventoryHostgroupMutationSerializer(serializers.Serializer):
         return normalized
 
     def validate(self, attrs):
-        name = str(attrs.get('name') or '').strip()
         if 'state' not in attrs and not self.partial:
             raise serializers.ValidationError({'state': 'This field is required.'})
-        attrs['name'] = name or 'Hostgroup'
+        if 'name' in attrs:
+            name = str(attrs['name'] or '').strip()
+            attrs['name'] = name or 'Hostgroup'
         return attrs
 
 

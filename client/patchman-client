@@ -1240,6 +1240,7 @@ post_data() {
     curl_opts="${curl_opts} -F repos=\<${tmpfile_rep}"
     curl_opts="${curl_opts} -F sec_updates=\<${tmpfile_sec}"
     curl_opts="${curl_opts} -F bug_updates=\<${tmpfile_bug}"
+    curl_opts="${curl_opts} -F phased_deferred_updates=\<${tmpfile_phased}"
     curl_opts="${curl_opts} -F installed_packages=\<${tmpfile_installed}"
     curl_opts="${curl_opts} -F modules=\<${tmpfile_mod}"
     curl_opts="${curl_opts} -F reboot=\"${reboot}\""

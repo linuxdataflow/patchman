@@ -67,6 +67,58 @@ class HostSerializer(serializers.HyperlinkedModelSerializer):
         return obj.calc_sec_updates_count
 
 
+class HostInventoryItemSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for the host inventory endpoint.
+
+    Excludes expensive M2M relations (repos, updates) that are not needed
+    for inventory display and would cause N+1 query issues.
+    """
+    bugfix_update_count = serializers.SerializerMethodField()
+    security_update_count = serializers.SerializerMethodField()
+    local_bugfix_update_count = serializers.SerializerMethodField()
+    local_security_update_count = serializers.SerializerMethodField()
+    local_phased_deferred_count = serializers.SerializerMethodField()
+    calculated_bugfix_update_count = serializers.SerializerMethodField()
+    calculated_security_update_count = serializers.SerializerMethodField()
+    tags = TagListSerializerField()
+
+    class Meta:
+        model = Host
+        fields = ('id', 'hostname', 'ipaddress', 'reversedns', 'check_dns',
+                  'osvariant', 'kernel', 'arch', 'domain', 'lastreport',
+                  'reboot_required', 'host_repos_only', 'tags',
+                  'updated_at', 'bugfix_update_count', 'security_update_count',
+                  'local_bugfix_update_count', 'local_security_update_count',
+                  'local_phased_deferred_count',
+                  'calculated_bugfix_update_count', 'calculated_security_update_count',
+                  'provider_name', 'provider_instance_id', 'provider_vm_name',
+                  'provider_region', 'provider_zone', 'provider_account_scope',
+                  'provider_resource_group', 'provider_machine_id',
+                  'last_provider_power_state', 'last_provider_sync_at',
+                  'reconcile_confidence', 'reconcile_reason')
+
+    def get_bugfix_update_count(self, obj):
+        return obj.calc_bug_updates_count
+
+    def get_security_update_count(self, obj):
+        return obj.calc_sec_updates_count
+
+    def get_local_bugfix_update_count(self, obj):
+        return obj.local_bug_updates_count
+
+    def get_local_security_update_count(self, obj):
+        return obj.local_sec_updates_count
+
+    def get_local_phased_deferred_count(self, obj):
+        return obj.local_phased_deferred_count
+
+    def get_calculated_bugfix_update_count(self, obj):
+        return obj.calc_bug_updates_count
+
+    def get_calculated_security_update_count(self, obj):
+        return obj.calc_sec_updates_count
+
+
 class HostRepoSerializer(serializers.HyperlinkedModelSerializer):
     class Meta:
         model = HostRepo

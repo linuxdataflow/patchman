@@ -15,6 +15,7 @@
 # along with Patchman. If not, see <http://www.gnu.org/licenses/>
 
 import hashlib
+import ipaddress
 from urllib.parse import urlencode, urlparse, urlsplit, urlunsplit
 
 import requests
@@ -27,10 +28,11 @@ from django.views.decorators.cache import never_cache
 from rest_framework import status, viewsets
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 
 from errata.tasks import update_errata as update_errata_task
 from hosts.models import Host
-from hosts.serializers import HostSerializer
+from hosts.serializers import HostInventoryItemSerializer
 from hosts.tasks import (
     find_all_host_updates,
     find_all_host_updates_homogenous,
@@ -49,6 +51,7 @@ from util.api_serializers import (
     HostInventoryHostgroupSerializer,
 )
 from util.models import HostInventoryHostgroup
+from util.permissions import HasAPIKeyOrIsAuthenticatedOrReadOnly
 from util.tasks import clean_database
 
 
@@ -184,17 +187,62 @@ def _normalize_azure_zone(value):
     return zone
 
 
-def _get_rundeck_resources(rundeck_host, project, token):
+def _validate_rundeck_host(rundeck_host):
+    """Validate and return the rundeck_host URL, or None if it is not allowed.
+
+    Checks the incoming URL against ``settings.RUNDECK_HOST`` (an exact URL
+    prefix allowlist entry).  If ``RUNDECK_HOST`` is not configured only
+    ``http`` / ``https`` schemes are accepted and private / loopback / link-local
+    / multicast / reserved / unspecified targets are rejected to prevent SSRF.
+    """
     if not rundeck_host:
+        return None
+    clean = str(rundeck_host).rstrip('/')
+
+    configured = str(getattr(settings, 'RUNDECK_HOST', '') or '').rstrip('/')
+    if configured:
+        if clean == configured:
+            return clean
+        return None
+
+    # No allowlist configured — validate scheme and reject dangerous targets.
+    try:
+        parsed = urlparse(clean)
+    except Exception:
+        return None
+    if parsed.scheme not in ('http', 'https'):
+        return None
+    hostname = parsed.hostname or ''
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_multicast
+            or addr.is_reserved
+            or addr.is_unspecified
+        ):
+            return None
+    except ValueError:
+        # Not an IP address — hostname-based URLs are allowed unless the host
+        # looks like a well-known private name (localhost, etc.).
+        if hostname.lower() in ('localhost',):
+            return None
+    return clean
+
+
+def _get_rundeck_resources(rundeck_host, project, token):
+    clean_host = _validate_rundeck_host(rundeck_host)
+    if not clean_host:
         return []
 
     token_hash = hashlib.sha256(str(token or '').encode('utf-8')).hexdigest()[:12]
-    cache_key = f'patchman:rundeck-resources:{rundeck_host}:{project}:{token_hash}'
+    cache_key = f'patchman:rundeck-resources:{clean_host}:{project}:{token_hash}'
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
 
-    clean_host = str(rundeck_host).rstrip('/')
     project_name = project or 'patchman'
     url = f'{clean_host}/api/46/project/{project_name}/resources?format=json'
     headers = {}
@@ -222,8 +270,20 @@ class HostInventoryViewSet(viewsets.ViewSet):
         return [AllowAny()]
 
     def list(self, request):
-        page = max(1, int(request.query_params.get('page', '1') or 1))
-        page_size = int(request.query_params.get('page_size', '50') or 50)
+        try:
+            page = max(1, int(request.query_params.get('page', '1') or 1))
+        except (ValueError, TypeError):
+            return Response(
+                {'status': 'error', 'message': 'page must be an integer'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            page_size = int(request.query_params.get('page_size', '50') or 50)
+        except (ValueError, TypeError):
+            return Response(
+                {'status': 'error', 'message': 'page_size must be an integer'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         page_size = min(max(page_size, 1), 200)
         search = str(request.query_params.get('search', '') or '').strip().lower()
         ordering = str(request.query_params.get('ordering', 'hostname') or 'hostname')
@@ -245,8 +305,10 @@ class HostInventoryViewSet(viewsets.ViewSet):
         rundeck_project = str(request.query_params.get('rundeck_project', 'patchman') or 'patchman').strip()
         rundeck_token = request.headers.get('X-Rundeck-Auth-Token') or request.query_params.get('rundeck_token', '')
 
-        hosts_qs = Host.objects.select_related('osvariant', 'arch', 'domain').all()
-        hosts = HostSerializer(hosts_qs, many=True, context={'request': request}).data
+        hosts_qs = Host.objects.select_related(
+            'osvariant', 'arch', 'domain',
+        ).prefetch_related('tags').all()
+        hosts = HostInventoryItemSerializer(hosts_qs, many=True, context={'request': request}).data
 
         resources = _get_rundeck_resources(rundeck_host, rundeck_project, rundeck_token)
         resource_indexes = _build_resource_indexes(resources)
@@ -466,7 +528,7 @@ class CeleryMetricsViewSet(viewsets.ViewSet):
     """Return basic Celery runtime metrics for UI status display."""
 
     def get_permissions(self):
-        return [AllowAny()]
+        return [HasAPIKeyOrIsAuthenticatedOrReadOnly()]
 
     def list(self, request):
         workers_count = None
@@ -512,7 +574,10 @@ class HostInventoryHostgroupViewSet(viewsets.ViewSet):
     """Persist host inventory hostgroups shared across all users."""
 
     def get_permissions(self):
-        return [AllowAny()]
+        # Reads (list/retrieve) are open; writes require API key or session auth.
+        if self.action in ('list', 'retrieve'):
+            return [AllowAny()]
+        return [HasAPIKeyOrIsAuthenticatedOrReadOnly()]
 
     def list(self, request):
         hostgroups = HostInventoryHostgroup.objects.all()
@@ -564,8 +629,22 @@ class HostInventoryHostgroupViewSet(viewsets.ViewSet):
         return Response({'status': 'deleted'}, status=status.HTTP_200_OK)
 
 
+class OperationsThrottle(AnonRateThrottle):
+    """Rate-limit the unauthenticated operations endpoint to prevent queue flooding.
+
+    Default: 60 requests / hour per IP.  Override with
+    ``OPERATIONS_THROTTLE_RATE`` in local_settings.py (e.g. ``'120/hour'``).
+    """
+
+    @property
+    def rate(self):
+        return getattr(settings, 'OPERATIONS_THROTTLE_RATE', '60/hour')
+
+
 class OperationViewSet(viewsets.ViewSet):
     """Queue asynchronous Patchman operations via Celery tasks."""
+
+    throttle_classes = [OperationsThrottle]
 
     def get_permissions(self):
         # Operations endpoint is intentionally unauthenticated.
