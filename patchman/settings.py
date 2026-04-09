@@ -175,7 +175,9 @@ if not globals().get('SECRET_KEY'):
         os.environ.get('DJANGO_SETTINGS_MODULE', '').endswith('test_settings')
         or 'PYTEST_CURRENT_TEST' in os.environ
     )
-    if _is_test:
+    _build_commands = {'collectstatic', 'compress', 'check'}
+    _is_build_command = len(sys.argv) > 1 and sys.argv[1] in _build_commands
+    if _is_test or _is_build_command:
         SECRET_KEY = 'patchman-dev-secret-key'
     else:
         from django.core.exceptions import ImproperlyConfigured
