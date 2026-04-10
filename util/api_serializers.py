@@ -137,7 +137,18 @@ class HostInventoryHostgroupMutationSerializer(serializers.Serializer):
         if cloud_filters and not isinstance(cloud_filters, dict):
             raise serializers.ValidationError({'cloudFilters': 'Must be an object.'})
 
+        if value.get('mode') == 'static':
+            members = value.get('members')
+            if members is not None and not isinstance(members, list):
+                raise serializers.ValidationError({'members': 'Must be a list.'})
+            normalized_members = [str(m).strip() for m in (members or []) if str(m).strip()]
+            return {
+                'mode': 'static',
+                'members': normalized_members,
+            }
+
         normalized = {
+            'mode': 'dynamic',
             'searchTerm': str(value.get('searchTerm') or '').strip(),
             'sortField': str(value.get('sortField') or 'hostname').strip() or 'hostname',
             'sortDir': -1 if value.get('sortDir') == -1 else 1,
