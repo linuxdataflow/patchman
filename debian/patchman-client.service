@@ -1,0 +1,13 @@
+[Unit]
+Description=Send patchman-client report at boot
+Documentation=https://github.com/furlongm/patchman
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/patchman-client
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=multi-user.target
