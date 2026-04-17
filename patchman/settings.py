@@ -4,6 +4,8 @@ import os
 import site
 import sys
 
+from kombu import Queue
+
 # use pysqlite3 if available
 try:
     import pysqlite3  # noqa
@@ -136,6 +138,15 @@ CELERY_BROKER_TRANSPORT_OPTIONS = {
 }
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_TASK_DEFAULT_QUEUE = 'bulk'
+CELERY_TASK_QUEUES = (
+    Queue('bulk'),
+    Queue('reports'),
+)
+CELERY_TASK_ROUTES = {
+    'reports.tasks.process_report': {'queue': 'reports'},
+    'reports.tasks.process_reports': {'queue': 'reports'},
+}
 
 LOGIN_REDIRECT_URL = '/patchman/'
 LOGOUT_REDIRECT_URL = '/patchman/login/'
